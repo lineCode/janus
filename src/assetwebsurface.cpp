@@ -79,7 +79,7 @@ void AssetWebSurface::SetSrc(const QString & base, const QString & u)
 void AssetWebSurface::Load()
 {
 //    qDebug() << "AssetWebSurface::Load()" << url;
-    if (webview) {        
+    if (webview) {
         webview->load(GetS("_src_url"));
     }
 }
@@ -208,7 +208,7 @@ void AssetWebSurface::mouseMoveEvent(QMouseEvent * e, const int )
 
     cursor_pos = e->pos();
 
-    if (webview) {        
+    if (webview) {
         QMouseEvent e2(QEvent::MouseMove, e->pos(), e->button(), e->buttons(), e->modifiers());
         webview->mouseMoveEvent(&e2); //TODO/BUG: uncommenting this causes render loop to stall when clicking UI URL bar thing
     }
@@ -239,7 +239,7 @@ void AssetWebSurface::keyReleaseEvent(QKeyEvent * e)
 {
     const int height = GetI("height");
 
-    if (webview) {        
+    if (webview) {
         webview->keyReleaseEvent(e);
     }
 }

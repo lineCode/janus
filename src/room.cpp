@@ -1593,7 +1593,7 @@ QPointer <QScriptEngine> Room::GetScriptEngine()
 
 void Room::UpdatePhysics(QPointer <Player> player)
 {
-    if (physics) {
+    /*if (physics) {
         //update gravity
         const double dt = player->GetF("delta_time");
         const float gravity = GetF("gravity");
@@ -1669,7 +1669,7 @@ void Room::UpdatePhysics(QPointer <Player> player)
                 physics->UpdateFromRigidBody(it.value());
             }
         }
-    }
+    }*/
 }
 
 void Room::UpdateJS(QPointer <Player> player)

@@ -3876,7 +3876,7 @@ void Game::UpdateControllers()
     float y0 = s[0].y;
     float x1 = s[1].x;
     float y1 = s[1].y;
-#ifdef OCULUS_SUBMISSION_BUILD
+#if defined(OCULUS_SUBMISSION_BUILD) && defined(__ANDROID__)
     // Headset trackpad is also used for locomotion
     if (!JNIUtil::GetGamepadConnected()) {
         x0 += x1;
@@ -5059,7 +5059,7 @@ QPointer <Asset> Game::CreateAssetFromURL(const QString url_str)
     else if (t == "assetvideo") {
         new_asset = new AssetVideo();
     }
-    else if (t == "assetwebsurface") {        
+    else if (t == "assetwebsurface") {
         new_asset = (AbstractWebSurface*)new AssetWebSurface();
     }
 

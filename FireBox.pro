@@ -665,7 +665,7 @@ unix:macx:LIBS += -lz -framework IOKit -framework CoreFoundation
 CONFIG(debug) {
     unix:macx:QMAKE_LFLAGS += -F"$$PWD/resources/cef/mac/Debug"
 }
-CONFIG(release) {1
+CONFIG(release) {
     unix:macx:QMAKE_LFLAGS += -F"$$PWD/resources/cef/mac/Release"
 }
 

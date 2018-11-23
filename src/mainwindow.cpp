@@ -1101,7 +1101,10 @@ void MainWindow::Closed()
 
 void MainWindow::SetupWidgets()
 {
-#ifndef __ANDROID__
+
+#ifdef __APPLE__
+    const unsigned int btn_size = 32;
+#elif !defined(__ANDROID__)
     const unsigned int btn_size = 32 * this->devicePixelRatio();
 #else
     const unsigned int btn_size = 92;

@@ -1490,7 +1490,10 @@ QPointer <QScriptEngine> Room::GetScriptEngine()
 
 void Room::UpdatePhysics(QPointer <Player> player)
 {
-    /*if (physics) {
+#ifdef __APPLE__
+    return;
+#endif
+    if (physics) {
         //update gravity
         const double dt = player->GetDeltaTime();
         const float gravity = props->GetGravity();
@@ -1550,6 +1553,7 @@ void Room::UpdatePhysics(QPointer <Player> player)
             physics->UpdateToRigidBody(player);
         }
 
+
         //update the simulation
         physics->UpdateSimulation(dt); //59.0 - provide consistent speed even when FPS is low
 
@@ -1566,7 +1570,7 @@ void Room::UpdatePhysics(QPointer <Player> player)
                 physics->UpdateFromRigidBody(it.value());
             }
         }
-    }*/
+    }
 }
 
 void Room::UpdateJS(QPointer <Player> player, MultiPlayerManager * multi_players)
@@ -2285,10 +2289,10 @@ void Room::SaveXML(QTextStream & ofs)
     if (props->GetFog()) {
         ofs << " fog=\"true\"";
     }
-    if (props->GetFogMode() == 0) {
+    if (props->GetFogMode() == "linear") {
         ofs << " fog_mode=\"linear\"";
     }
-    else if (props->GetFogMode() == 2) {
+    else if (props->GetFogMode() == "exp2") {
         ofs << " fog_mode=\"exp2\"";
     }
     if (props->GetFogDensity() != 1.0f) {
@@ -2583,10 +2587,10 @@ QVariantMap Room::GetJSONCode(const bool show_defaults) const
     if (props->GetFog()) {
         room["fog"] = true;
     }
-    if (props->GetFogMode() == 0) {
+    if (props->GetFogMode() == "linear") {
         room["fog_mode"] = "linear";
     }
-    else if (props->GetFogMode() == 2) {
+    else if (props->GetFogMode() == "exp2") {
         room["fog_mode"] = "exp2";
     }
     if (props->GetFogDensity() != 1.0f) {
@@ -4733,7 +4737,7 @@ void Room::AddAsset(const QString asset_type, const QVariantMap & property_list,
     case TYPE_ASSETWEBSURFACE:
     {
         QPointer <AbstractWebSurface> a;
-#if !defined(__APPLE__) && !defined(__ANDROID__)
+#if !defined(__ANDROID__)
         a = (AbstractWebSurface*)new AssetWebSurface();
         a->SetTextureAlpha(true);
         if (a->GetWebView()) {
@@ -4744,18 +4748,18 @@ void Room::AddAsset(const QString asset_type, const QVariantMap & property_list,
             palette.setBrush(QPalette::Window, Qt::white);
             palette.setBrush(QPalette::Base, QColor(0,0,0,0));
             a->GetWebView()->setPalette(palette);
-    #else
-            a = (AbstractWebSurface*)new AssetWebSurface();
-            a->SetTextureAlpha(true);
-            a->GetWebView()->initializeNonMenu();
-
-            //adjust background colour palette based on if menu is in focus or not
-            QPalette palette = a->GetWebView()->palette();
-            palette.setBrush(QPalette::Window, Qt::white);
-            palette.setBrush(QPalette::Base, QColor(0,0,0,0));
-            a->GetWebView()->setPalette(palette);
-    #endif
         }
+#else
+        a = (AbstractWebSurface*)new AssetWebSurface();
+        a->SetTextureAlpha(true);
+        a->GetWebView()->initializeNonMenu();
+
+        //adjust background colour palette based on if menu is in focus or not
+        QPalette palette = a->GetWebView()->palette();
+        palette.setBrush(QPalette::Window, Qt::white);
+        palette.setBrush(QPalette::Base, QColor(0,0,0,0));
+        a->GetWebView()->setPalette(palette);
+#endif
 
         a->SetSrc(url, property_list["src"].toString());
         a->SetProperties(property_list);

@@ -14,7 +14,7 @@ MainWindow::MainWindow()
     : cur_screen(0),
       fullscreened(false)
 {
-    SettingsManager::LoadSettings();
+    SettingsManager::LoadSettings();   
 
     //set application-wide font
     const QString font_path = MathUtil::GetApplicationPath() + "assets/fonts/OpenSans-Regular.ttf";
@@ -334,7 +334,7 @@ MainWindow::MainWindow()
 
 MainWindow::~MainWindow()
 {
-    disconnect(&timer2);
+//    disconnect(&timer2);
     MathUtil::FlushErrorLog();
 
     CookieJar::cookie_jar->SaveToDisk();
@@ -465,12 +465,6 @@ bool MainWindow::eventFilter(QObject *obj, QEvent *event)
                     QMouseEvent e2(QEvent::MouseButtonPress, url_bar_tab->tabBar()->mapFromGlobal(mapToGlobal(e->pos())), Qt::LeftButton, Qt::LeftButton, Qt::NoModifier);
                     url_bar_tab->mousePressEvent(&e2);
                 }
-                /*else if (social_window_tab->tabBar()->tabAt(social_window_tab->tabBar()->mapFromGlobal(mapToGlobal(e->pos()))) < 0 &&
-                         url_bar_tab->tabBar()->tabAt(url_bar_tab->tabBar()->mapFromGlobal(mapToGlobal(e->pos()))) < 0)
-                    //Register events to glwidget if tab bar is pressed, but there is no tab under it
-                {
-                    glwidget->SetGrab(true);
-                }*/
 
                 if (glwidget->GetGrab() &&
                     (social_window_tab->tabBar()->tabAt(social_window_tab->tabBar()->mapFromGlobal(mapToGlobal(e->pos()))) >= 0 || //Clicked on tab
@@ -482,10 +476,16 @@ bool MainWindow::eventFilter(QObject *obj, QEvent *event)
                     glwidget->SetGrab(false); //Reset grab, allow users to register mouse events to URL bar and social window
                                               //Only if user clicks outside of glwidget, inside a tab or at the tab's widget
                 }
-                else
+                else if (!glwidget->GetGrab() &&
+                         !(social_window_tab->tabBar()->tabAt(social_window_tab->tabBar()->mapFromGlobal(mapToGlobal(e->pos()))) >= 0 || //Clicked on tab
+                          (social_window_tab->rect().contains(social_window_tab->mapFromGlobal(mapToGlobal(e->pos()))) && !social_window_tab->tabBar()->rect().contains(social_window_tab->tabBar()->mapFromGlobal(mapToGlobal(e->pos())))) || //Clicked on tab widget
+                         (url_bar_tab->tabBar()->tabAt(url_bar_tab->tabBar()->mapFromGlobal(mapToGlobal(e->pos()))) >= 0 ||
+                          (url_bar_tab->rect().contains(url_bar_tab->mapFromGlobal(mapToGlobal(e->pos()))) && !url_bar_tab->tabBar()->rect().contains(url_bar_tab->tabBar()->mapFromGlobal(mapToGlobal(e->pos())))))))
                 {
-                    glwidget->SetGrab(true);
+                    glwidget->SetGrab(true); //Grab on mouse press if user doesn't click on any tabs
                 }
+
+                JNIUtil::HideKeyboard();
             }
         }
         break;
@@ -509,23 +509,6 @@ bool MainWindow::eventFilter(QObject *obj, QEvent *event)
             {
                 QMouseEvent e2(QEvent::MouseButtonPress, url_bar_tab->tabBar()->mapFromGlobal(mapToGlobal(e->pos())), Qt::LeftButton, Qt::LeftButton, Qt::NoModifier);
                 url_bar_tab->mouseReleaseEvent(&e2);
-            }
-
-            if ((strcmp(obj->metaObject()->className(), "QOpenGLWidget") == 0 || strcmp(obj->metaObject()->className(), "QTabBar") == 0 || strcmp(obj->metaObject()->className(), "QTabWidget") == 0)
-                    && QApplication::focusWidget() && strcmp(QApplication::focusWidget()->metaObject()->className(), "QLineEdit") == 0) //Remove focus from a line edit if glwidget or tab is clicked
-            {
-                if (QApplication::focusWidget() == urlbar && urlbar->isModified()) urlbar->setModified(false);
-                QApplication::focusWidget()->clearFocus();
-                glwidget->SetGrab(true);
-            }
-
-            if (strcmp(obj->metaObject()->className(), "QLineEdit") == 0 && obj == urlbar) //Select all if URL bar is focused on
-            {
-                if (!urlbar->hasSelectedText() && !urlbar->isModified())
-                {
-                    urlbar->setModified(true);
-                    urlbar->selectAll();
-                }
             }
 
             if ((QWidget *) obj != settings_window && !settings_window->children().contains(obj)
@@ -570,22 +553,26 @@ void MainWindow::Update()
     }
 
 #ifdef __ANDROID__
+    // Need to always be in VR mode for Gear/Go
+    if (!paused && !require_permissions && hmd_manager && (hmd_manager->GetHMDType() == "go" || hmd_manager->GetHMDType() == "gear") && (!hmd_manager->GetEnabled() || !JNIUtil::GetShowingVR())) {
+        EnterVR();
+    }
 
     //Request user remove headset to accept permissions if user is still in MODE_GVR
     if (require_permissions){
         if (GLWidget::GetDisplayMode() == MODE_2D && !asked_permissions){
             //If user removed headset, request permissions
+            asked_permissions = true;
             JNIUtil::AskPermissions();
             game->SetRemoveHeadset(false);
-            asked_permissions = true;
         }
         else if (GLWidget::GetDisplayMode() == MODE_GVR && !asked_permissions){
             //Only show image requesting user to remove headset if in VR mode
             game->SetRemoveHeadset(true);
         }
         else if (GLWidget::GetDisplayMode() == MODE_GEAR && !asked_permissions){
-            JNIUtil::AskPermissions();
             asked_permissions = true;
+            JNIUtil::AskPermissions();
         }
 
         if (asked_permissions && JNIUtil::GetAnsweredPermissions()){
@@ -602,7 +589,7 @@ void MainWindow::Update()
             require_permissions = false;
             asked_permissions = false;
 
-            if (GLWidget::GetDisplayMode() == MODE_GEAR) {
+            if (hmd_manager && (hmd_manager->GetHMDType() == "go" || hmd_manager->GetHMDType() == "gear")) {
                 EnterVR();
             }
 #ifndef OCULUS_SUBMISSION_BUILD
@@ -655,13 +642,22 @@ void MainWindow::Update()
             JNIUtil::SetControlsVisible(true, SettingsManager::GetShowViewJoystick());
     }
 #endif
+    if (!urlbar->hasFocus() && glwidget->GetGrab() && urlbar->text() != game->GetPlayer()->GetProperties()->GetURL()) {
+        urlbar->setText(game->GetPlayer()->GetProperties()->GetURL());
+    }
+#else
+    if (!urlbar->hasFocus() && urlbar->text() != game->GetPlayer()->GetProperties()->GetURL()) {
+        urlbar->setText(game->GetPlayer()->GetProperties()->GetURL());
+    }
 #endif
 
-    if (!urlbar->hasFocus() && urlbar->text() != game->GetPlayer()->GetS("url")) {
-        urlbar->setText(game->GetPlayer()->GetS("url"));
+    //60.0 - top bar widget visibility
+    const bool vis = !(fullscreened && glwidget->GetGrab());
+    if (topbarwidget && topbarwidget->isVisible() != vis) {
+        topbarwidget->setVisible(vis);
     }
 
-    //59.3 - disable pocketspace toggle button if there is no other current viewed room to toggle to
+    //59.3 - disable home toggle button if there is no other current viewed room to toggle to
     if (game->GetEnvironment()->GetLastRoom().isNull() && button_home->isVisible()) {
         button_home->setVisible(false);
     }
@@ -688,7 +684,7 @@ void MainWindow::Update()
     const QString bookmarked_path = MathUtil::GetApplicationPath() + "assets/icons/bookmarked.png";
     const QString bookmark_path = MathUtil::GetApplicationPath() + "assets/icons/bookmark.png";
 
-    if (game->GetBookmarkManager()->GetBookmarked(game->GetPlayer()->GetS("url"))) {
+    if (game->GetBookmarkManager()->GetBookmarked(game->GetPlayer()->GetProperties()->GetURL())) {
         if (button_bookmark_state != 1) {
             button_bookmark_state = 1;
             button_bookmark->setIcon(QIcon(bookmarked_path));
@@ -721,7 +717,7 @@ void MainWindow::Update()
 
     //player text entry (URL bar or chat text entry)
     if (social_window && urlbar) {
-        game->GetPlayer()->SetB("typing", social_window->GetFocusOnChatEntry() || urlbar->hasFocus());
+        game->GetPlayer()->SetTyping(social_window->GetFocusOnChatEntry() || urlbar->hasFocus());
     }
 
     //Should quit? or not entitled?
@@ -764,14 +760,13 @@ void MainWindow::Update()
 
 void MainWindow::CEFTimeOut()
 {    
-#ifndef __ANDROID__  
-    if (game && !game->GetDoExit() && SettingsManager::GetUpdateWebsurfaces()) { // && cef_mutex.tryLock()) {
-//        qDebug() << "MainWindow::CEFTimeOut() enter";
-        CefDoMessageLoopWork();
-//        qDebug() << "MainWindow::CEFTimeOut() exit";
-//        cef_mutex.unlock();
-    }
-#endif
+//#ifndef __ANDROID__
+//    if (game && !game->GetDoExit() && SettingsManager::GetUpdateWebsurfaces()) {
+////        qDebug() << "MainWindow::CEFTimeOut() enter";
+//        CefDoMessageLoopWork();
+////        qDebug() << "MainWindow::CEFTimeOut() exit";
+//    }
+//#endif
 }
 
 void MainWindow::TimeOut()
@@ -804,7 +799,11 @@ void MainWindow::TimeOut()
     RendererInterface::m_pimpl->ConfigureSamples(sampleCount);
 
     //Check for changes to enhanced depth precision setting
+#ifdef __ANDROID__
+    RendererInterface::m_pimpl->SetIsUsingEnhancedDepthPrecision(false);
+#else
     RendererInterface::m_pimpl->SetIsUsingEnhancedDepthPrecision(SettingsManager::GetEnhancedDepthPrecisionEnabled());
+#endif
 
     Update();    
     glwidget->update();      
@@ -958,43 +957,49 @@ void MainWindow::Initialize()
 
     switch (disp_mode) {    
     case MODE_VIVE:
-        game->GetPlayer()->SetS("hmd_type", hmd_manager->GetHMDString());
-        game->GetPlayer()->SetB("hmd_enabled", true);
+        game->GetPlayer()->SetHMDType(hmd_manager->GetHMDString());
+        game->GetPlayer()->SetHMDEnabled(true);
         menu_ops.hmd = true;
         break;
     case MODE_RIFT:
-        game->GetPlayer()->SetS("hmd_type", "rift");
-        game->GetPlayer()->SetB("hmd_enabled", true);
+        game->GetPlayer()->SetHMDType("rift");
+        game->GetPlayer()->SetHMDEnabled(true);
         menu_ops.hmd = true;
         break;
     case MODE_GVR:
-        game->GetPlayer()->SetS("hmd_type", hmd_manager->GetHMDType());
-        game->GetPlayer()->SetB("hmd_enabled", true);
+        game->GetPlayer()->SetHMDType(hmd_manager->GetHMDType());
+        game->GetPlayer()->SetHMDEnabled(true);
         menu_ops.hmd = true;
         break;
     case MODE_GEAR:
-        game->GetPlayer()->SetS("hmd_type", hmd_manager->GetHMDType());
-        game->GetPlayer()->SetB("hmd_enabled", true);
+        game->GetPlayer()->SetHMDType(hmd_manager->GetHMDType());
+        game->GetPlayer()->SetHMDEnabled(true);
         menu_ops.hmd = true;
         break;
     case MODE_SBS:
-        game->GetPlayer()->SetS("hmd_type", "sbs");
+        game->GetPlayer()->SetHMDType("sbs");
         break;
     case MODE_SBS_REVERSE:
-        game->GetPlayer()->SetS("hmd_type", "sbs_reverse");
+        game->GetPlayer()->SetHMDType("sbs_reverse");
         break;
     case MODE_OU3D:
-        game->GetPlayer()->SetS("hmd_type", "ou3d");
+        game->GetPlayer()->SetHMDType("ou3d");
         break;
     case MODE_CUBE:
-        game->GetPlayer()->SetS("hmd_type", "cube");
+        game->GetPlayer()->SetHMDType("cube");
         break;
     default:
-        game->GetPlayer()->SetS("hmd_type", "2d");
+        game->GetPlayer()->SetHMDType("2d");
         break;
     }
 
-    qDebug() << "MainWindow::InitializeGame() - HMD/render type:" << game->GetPlayer()->GetS("hmd_type");
+#ifdef __ANDROID__
+    game->GetPlayer()->SetDeviceType("android");
+#else
+    game->GetPlayer()->SetDeviceType("desktop");
+#endif
+
+    qDebug() << "MainWindow::InitializeGame() - HMD/render type:" << game->GetPlayer()->GetHMDType();
 
     //game->SetPlayerHeight(rift_render.GetPlayerEyeHeight());
     qDebug() << "MainWindow::InitializeGame() - Initializing sound manager...";
@@ -1030,15 +1035,18 @@ void MainWindow::Initialize()
 #endif
     }
 
-#ifndef __ANDROID__
-    connect(&timer2, SIGNAL(timeout()), this, SLOT(CEFTimeOut()), Qt::ConnectionType::QueuedConnection);
-#endif
-    connect(&timer, SIGNAL(timeout()), this, SLOT(TimeOut()), Qt::ConnectionType::QueuedConnection);
+    //use Qt::ConnectionType::QueuedConnection for timeouts, makes VOIP smooth, etc.
+//#ifndef __ANDROID__
+//    connect(&timer2, SIGNAL(timeout()), this, SLOT(CEFTimeOut()), Qt::ConnectionType::QueuedConnection);
+////    connect(&timer2, SIGNAL(timeout()), this, SLOT(CEFTimeOut()));
+//#endif
+//    connect(&timer, SIGNAL(timeout()), this, SLOT(TimeOut()), Qt::ConnectionType::QueuedConnection);
+    connect(&timer, SIGNAL(timeout()), this, SLOT(TimeOut()));
 
-#ifndef __ANDROID__
-    timer2.start( 0 );
-#endif
-    timer.start( 0 );    
+//#ifndef __ANDROID__
+//    timer2.start( 10 );
+//#endif
+    timer.start( 0 );
 }
 
 void MainWindow::UpdateHands()
@@ -1065,7 +1073,7 @@ void MainWindow::Closed()
     qDebug() << "MainWindow::Closed()";      
 
     disconnect(&timer, 0, 0, 0);
-    disconnect(&timer2, 0, 0, 0);    
+//    disconnect(&timer2, 0, 0, 0);
 
     if (social_window) {
         social_window->Shutdown();
@@ -1082,13 +1090,13 @@ void MainWindow::Closed()
 //    QApplication::closeAllWindows();
     QCoreApplication::quit(); //60.0 - important!  Calling QCoreApplication::quit clears the event loop, so no more events go to CEF
 
-#ifndef __ANDROID__
-    //shut down CEF
-    CEFWebView::Shutdown();
-    qDebug() << "CefShutdown() started";
-    CefShutdown();
-    qDebug() << "CefShutdown() done";
-#endif
+//#ifndef __ANDROID__
+//    //shut down CEF
+//    CEFWebView::Shutdown();
+//    qDebug() << "CefShutdown() started";
+//    CefShutdown();
+//    qDebug() << "CefShutdown() done";
+//#endif
 }
 
 void MainWindow::SetupWidgets()
@@ -1128,7 +1136,7 @@ void MainWindow::SetupWidgets()
     button_home->setIconSize(QSize(btn_size,btn_size));
     button_home->setMaximumWidth(btn_size);
     button_home->setMaximumHeight(btn_size);
-    button_home->setToolTip("Go to/from pocketspace");
+    button_home->setToolTip("Go to/from home URL");
     connect(button_home, SIGNAL(clicked(bool)), this, SLOT(ActionHome()));
 
     urlbar = new QLineEdit();
@@ -1179,7 +1187,7 @@ void MainWindow::SetupWidgets()
     w4->setFixedHeight(btn_size);
 #endif
 
-    QWidget * w3 = new QWidget();
+    topbarwidget = new QWidget();
     QHBoxLayout * l3 = new QHBoxLayout();
     l3->addWidget(button_back);
     l3->addWidget(button_forward);
@@ -1190,13 +1198,13 @@ void MainWindow::SetupWidgets()
     l3->addWidget(button_ellipsis);
     l3->setSpacing(0);
     l3->setMargin(0);
-    w3->setLayout(l3);
+    topbarwidget->setLayout(l3);
 #ifndef __ANDROID__
-    w3->setMaximumHeight(32);
+    topbarwidget->setMaximumHeight(32);
 #else
-    w3->setFixedHeight(btn_size);
+    topbarwidget->setFixedHeight(btn_size);
 #endif
-    w3->setStyleSheet("QWidget {color: #FFFFFF; background: #2F363B;}"
+    topbarwidget->setStyleSheet("QWidget {color: #FFFFFF; background: #2F363B;}"
                         "QPushButton:hover, QPushButton:selected {background: #3E4D54;}" //Hover: #3E4D54; Click: #1F2227;
                         "QPushButton::menu-indicator {image: url("");}"); //Hover: #3E4D54; Click: #1F2227;
 
@@ -1207,13 +1215,13 @@ void MainWindow::SetupWidgets()
     l2->setMargin(0);
     //add top panel widget (optionally disabled if demo_enabled is true and demo_ui is false)
     if (!SettingsManager::GetDemoModeEnabled() || SettingsManager::GetDemoModeUI()) {
-        l2->addWidget(w3);
+        l2->addWidget(topbarwidget);
     }
     l2->addWidget(glwidget);
 #else
     QWidget * w5 = new QWidget();
     QVBoxLayout * l5 = new QVBoxLayout();
-    l5->addWidget(w3);
+    l5->addWidget(topbarwidget);
     w5->setLayout(l5);
     w5->setFixedHeight(btn_size + 32);
     w5->setStyleSheet("QWidget {color: #FFFFFF; background: #2F363B;}"); //Hover: #3E4D54; Click: #1F2227;
@@ -1330,6 +1338,11 @@ void MainWindow::SetupMenuWidgets()
     settingsAct->setStatusTip(tr("Settings..."));
     connect(settingsAct, &QAction::triggered, this, &MainWindow::ActionSettings);
 
+    virtualMenuAct = new QAction(tr("Virtual Menu"), this);
+    virtualMenuAct->setShortcut(QKeySequence(Qt::Key_Tab));
+    virtualMenuAct->setStatusTip(tr("Show/hide virtual menu"));
+    connect(virtualMenuAct, &QAction::triggered, this, &MainWindow::ActionVirtualMenu);
+
     toggleFullscreenAct = new QAction(tr("Fullscreen"), this);
     toggleFullscreenAct->setStatusTip(tr("Toggle Fullscreen Mode"));
     connect(toggleFullscreenAct, &QAction::triggered, this, &MainWindow::ActionToggleFullscreen);
@@ -1394,26 +1407,40 @@ void MainWindow::SetupMenuWidgets()
     connect(bookmarkMenu, SIGNAL(aboutToShow()), this, SLOT(ActionOpenBookmarks()));
     connect(bookmarkMenu, SIGNAL(triggered(QAction*)), this, SLOT(ActionOpenURL(QAction *)));
 
+    fileMenu = new QMenu("File", this);
 #ifndef __ANDROID__
-    webspaceMenu = new QMenu("Webspace", this);
-    webspaceMenu->addAction(newAct);
-    webspaceMenu->addAction(openAct);
-    webspaceMenu->addAction(saveAct);
-    webspaceMenu->addAction(saveAsAct);
-    webspaceMenu->addSeparator();
-    webspaceMenu->addAction(importLocalAct);
-    webspaceMenu->addAction(importRemoteAct);
+    fileMenu->addAction(newAct);
+    fileMenu->addAction(openAct);
+    fileMenu->addAction(saveAct);
+    fileMenu->addAction(saveAsAct);
+    fileMenu->addSeparator();
+    fileMenu->addAction(importLocalAct);
+    fileMenu->addAction(importRemoteAct);
+    fileMenu->addSeparator();
+    fileMenu->addAction(saveThumbAct);
+#else
+    fileMenu->addAction(saveScreenshotAct);
+    fileMenu->addAction(saveEquiAct);
+#endif
 
-    panelsMenu = new QMenu("Panels", this);
-    panelsMenu->addAction(socialAct);
-    panelsMenu->addAction(navigationAct);
-    panelsMenu->addSeparator();
-    panelsMenu->addAction(assetAct);
-    panelsMenu->addAction(hierarchyAct);
-    panelsMenu->addAction(propertiesAct);
-    panelsMenu->addSeparator();
-    panelsMenu->addAction(codeEditorAct);
-    connect(panelsMenu, SIGNAL(aboutToShow()), this, SLOT(ActionOpenWindow()));
+#ifndef __ANDROID__
+    windowMenu = new QMenu("Window", this);
+    windowMenu->addAction(codeEditorAct);
+    windowMenu->addSeparator();
+    windowMenu->addAction(socialAct);
+    windowMenu->addAction(navigationAct);
+    windowMenu->addSeparator();
+    windowMenu->addAction(assetAct);
+    windowMenu->addAction(hierarchyAct);
+    windowMenu->addAction(propertiesAct);
+    windowMenu->addSeparator();
+    windowMenu->addAction(codeEditorAct);
+    windowMenu->addSeparator();
+#ifndef __ANDROID__
+    windowMenu->addSeparator();
+    windowMenu->addAction(toggleFullscreenAct);
+#endif
+    connect(windowMenu, SIGNAL(aboutToShow()), this, SLOT(ActionOpenWindow()));
 
     usersMenu = new QMenu("Users", this);
     usersMenu->addAction(startRecordingAct);
@@ -1424,34 +1451,24 @@ void MainWindow::SetupMenuWidgets()
     connect(usersMenu, SIGNAL(aboutToShow()), this, SLOT(ActionOpenEdit()));
 #endif
 
-    viewMenu = new QMenu("View", this);
+    ellipsisMenu = new QMenu(this);
+    ellipsisMenu->addMenu(fileMenu);
+
 #ifndef __ANDROID__
-    viewMenu->addAction(saveThumbAct);
-#endif
-    viewMenu->addAction(saveScreenshotAct);
-    viewMenu->addAction(saveEquiAct);
-#ifndef __ANDROID__
-    viewMenu->addSeparator();
-    viewMenu->addAction(toggleFullscreenAct);
+    ellipsisMenu->addMenu(windowMenu);
+    ellipsisMenu->addMenu(usersMenu);
 #endif
 
-    ellipsisMenu = new QMenu(this);
-#ifndef __ANDROID__
-    ellipsisMenu->addMenu(webspaceMenu);
-#endif
     ellipsisMenu->addMenu(bookmarkMenu);
     ellipsisMenu->addSeparator();
-    ellipsisMenu->addMenu(viewMenu);
-#ifndef __ANDROID__
-    ellipsisMenu->addMenu(panelsMenu);
-    ellipsisMenu->addMenu(usersMenu);
-#else
+#ifdef __ANDROID__
     ellipsisMenu->addSeparator();
     //ellipsisMenu->addAction(togglePerfAct);
     ellipsisMenu->addAction(enterVRAct);
 #endif
     ellipsisMenu->addSeparator();
     ellipsisMenu->addAction(settingsAct);
+    ellipsisMenu->addAction(virtualMenuAct);
 #ifndef __ANDROID__
     ellipsisMenu->addAction(exitAct);
 #endif
@@ -1461,26 +1478,18 @@ void MainWindow::SetupMenuWidgets()
 
 QString MainWindow::GetNewWorkspaceDirectory()
 {
-    bool available = false;
+    QDir d;
     int val = 0;
-    QString path;
-
-    while (!available) {
+    while (true) {
         ++val;
-
-        //build an enumerated path
-        const QString number = QString("%1").arg(val, 3, 10, QChar('0'));
-        path = MathUtil::GetWorkspacePath() + "/workspace" + number;
-
         //check that workspace directory does not exist
-        QDir d;
-        d.setPath(path);
+        d.setPath(MathUtil::GetWorkspacePath() + "workspace" +
+               QString("%1").arg(val, 3, 10, QChar('0')));
         if (!d.exists()) {
-            available = true;
+            break;
         }
     }
-
-    return path;
+    return d.path();
 }
 
 void MainWindow::ActionNew()
@@ -1508,7 +1517,7 @@ void MainWindow::ActionSave()
 
 void MainWindow::ActionSaveAs()
 {
-    QString filename = QFileDialog::getSaveFileName(this, "Save As...", MathUtil::GetWorkspacePath(), tr("HTML (*.html)"));
+    QString filename = QFileDialog::getSaveFileName(this, "Save As...", MathUtil::GetWorkspacePath(), tr("HTML (*.html);; JSON (*.json)"));
     if (!filename.isNull()) {
         game->SaveRoom(filename);
     }
@@ -1591,12 +1600,12 @@ void MainWindow::ActionReload()
 
 void MainWindow::ActionHome()
 {
-    game->StartEscapeToPocketspace();
+    game->StartEscapeToHome();
 }
 
 void MainWindow::ActionBookmark()
 {
-    const QString url = game->GetPlayer()->GetS("url");
+    const QString url = game->GetPlayer()->GetProperties()->GetURL();
     const bool url_bookmarked = game->GetBookmarkManager()->GetBookmarked(url);
     url_bookmarked ? ActionRemoveBookmark() : ActionAddBookmark();
 }
@@ -1626,6 +1635,9 @@ void MainWindow::DoOpenURL(const QString url)
     else if (s.toLower() == "home") {
         s = SettingsManager::GetLaunchURL();
     }
+    else if (s.toLower() == "bookmarks" || s.toLower() == "workspaces") {
+
+    }
     else if (s.left(4).toLower() != "http") {
         s = "http://" + s;
     }
@@ -1638,6 +1650,15 @@ void MainWindow::DoOpenURL(const QString url)
 void MainWindow::ActionSocial()
 {
     social_window->setVisible(socialAct->isChecked());
+}
+
+void MainWindow::ActionVirtualMenu()
+{
+    //62.0 - do not show menu when in edit mode or doing something else
+    if (game->GetState() == JVR_STATE_DEFAULT) {
+        game->GetVirtualMenu()->MenuButtonPressed();
+        glwidget->SetGrab(true);
+    }
 }
 
 #ifndef __ANDROID__
@@ -1730,7 +1751,7 @@ void MainWindow::ActionRemoveBookmark()
 
 void MainWindow::ActionOpenBookmarks()
 {
-    const QString url = game->GetPlayer()->GetS("url");
+    const QString url = game->GetPlayer()->GetProperties()->GetURL();
     const bool url_bookmarked = game->GetBookmarkManager()->GetBookmarked(url);
     if (url_bookmarked) {
         addBookmarkAct->setShortcut(QKeySequence());
@@ -1860,7 +1881,7 @@ void MainWindow::EnterVR()
         {
             GLWidget::SetDisplayMode(MODE_GEAR);
         }
-        game->GetPlayer()->SetS("hmd_type", hmd_manager->GetHMDType());
+        game->GetPlayer()->SetHMDType(hmd_manager->GetHMDType());
 
         game->SetMouseDoPitch(false);
         game->GetMenuOperations().hmd = true;
@@ -1881,7 +1902,7 @@ void MainWindow::ExitVR()
         GLWidget::SetDisplayMode(MODE_2D);
 
         game->SetMouseDoPitch(true);
-        game->GetPlayer()->SetS("hmd_type", "2d");
+        game->GetPlayer()->SetHMDType("2d");
         game->GetMenuOperations().hmd = false;
 
         glwidget->SetupFramebuffer();
@@ -1914,7 +1935,7 @@ void MainWindow::Resume()
 
     QPointer <RoomPhysics> phys = game->GetEnvironment()->GetCurRoom()->GetPhysics();
     if (phys) {
-        phys->SetPlayerGravity(game->GetEnvironment()->GetCurRoom()->GetF("gravity"));
+        phys->SetPlayerGravity(game->GetEnvironment()->GetCurRoom()->GetProperties()->GetGravity());
     }
 
     //game->GetEnvironment()->ReloadRoom();

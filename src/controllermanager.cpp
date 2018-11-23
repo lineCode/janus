@@ -139,17 +139,17 @@ void ControllerManager::DrawGhostGL(QPointer <AssetShader> shader, const int i, 
             touch_obj[i]->DrawGL(shader);
         }
     }
-    else if (QString::compare(hmd_type, "daydream") == 0) {
+    else if (QString::compare(hmd_type, "daydream") == 0 && i == 0) {
         if (daydream_obj) {
             daydream_obj->DrawGL(shader);
         }
     }
-    else if (QString::compare(hmd_type, "gear") == 0) {
+    else if (QString::compare(hmd_type, "gear") == 0 && i == 0) {
         if (gear_obj) {
             gear_obj->DrawGL(shader);
         }
     }
-    else if (QString::compare(hmd_type, "go") == 0) {
+    else if (QString::compare(hmd_type, "go") == 0 && i == 0) {
         if (go_obj) {
             go_obj->DrawGL(shader);
         }
@@ -330,7 +330,7 @@ void ControllerManager::Update(const bool use_gamepad)
         UpdateGamepad();
         using_gamepad = true;
 #endif
-    }    
+    }
 
     UpdateAssets();
 }
@@ -379,14 +379,48 @@ void ControllerManager::UpdateControllers()
                 s[i].y = hmd_manager->GetControllerThumbpad(i).y();
             }
             else if (hmd_manager->GetHMDType() == "daydream" || hmd_manager->GetHMDType() == "go" || hmd_manager->GetHMDType() == "gear") {
-                //Thumbpad for moving
-                if (hmd_manager->GetControllerThumbpadTouched(i)){
-                    s[i].x = hmd_manager->GetControllerThumbpad(i).x();
-                    s[i].y = hmd_manager->GetControllerThumbpad(i).y();
+                //Thumbpad: use y for moving and x for turning
+                if (i == 0) {
+                    if (hmd_manager->GetControllerThumbpadTouched(0) && hmd_manager->GetControllerThumbpadPressed(0)){
+                        s[1].x = (fabs(hmd_manager->GetControllerThumbpad(i).y()) < 0.35f)?hmd_manager->GetControllerThumbpad(0).x():0.0f;
+                    }
+                    //else if (hmd_manager->GetControllerThumbpadTouched(0)){
+                    //    s[0].x = hmd_manager->GetControllerThumbpad(0).x();
+                    //}
+                    else {
+                        //s[0].x = 0.0f;
+                        s[1].x = 0.0f;
+                    }
+
+                    if (hmd_manager->GetControllerThumbpadTouched(0)){
+                        s[i].y = (fabs(hmd_manager->GetControllerThumbpad(i).y()) > 0.35f)?hmd_manager->GetControllerThumbpad(i).y():0.0f;
+                    }
+                    else {
+                        s[i].y = 0.0f;
+                    }
                 }
-                else {
-                    s[i].x = 0.0f;
-                    s[i].y = 0.0f;
+                //Special case: Gear headset controller
+                else if (i == 1) {
+                    if (hmd_manager->GetControllerThumbpadTouched(i)){
+                        if (hmd_manager->GetControllerThumbpadTouched(0)){
+                            if (hmd_manager->GetControllerThumbpadPressed(0)){
+                                s[i].x += hmd_manager->GetControllerThumbpad(i).x();
+                            }
+                            s[0].y += hmd_manager->GetControllerThumbpad(i).y();
+                        }
+                        else{
+                            s[i].x = hmd_manager->GetControllerThumbpad(i).x();
+                            s[0].y = hmd_manager->GetControllerThumbpad(i).y();
+                        }
+                    }
+                    else {
+                        if (!hmd_manager->GetControllerThumbpadTouched(0)){
+                            s[0].y = 0.0f;
+                        }
+                        if (!hmd_manager->GetControllerThumbpadPressed(0)){
+                            s[i].x = 0.0f;
+                        }
+                    }
                 }
             }
             else if (hmd_manager->GetHMDType() == "wmxr") {
@@ -430,11 +464,12 @@ void ControllerManager::UpdateControllers()
                 else if (hmd_manager->GetHMDType() == "daydream") { // Only one daydream controller
                     if (j == 0) {
                         //Thumbpad for teleporting and clicks
-                        b_pressed = hmd_manager->GetControllerThumbpadPressed(i);
-                        b_hover = hmd_manager->GetControllerThumbpadTouched(i);
+                        float dist = sqrt(pow(hmd_manager->GetControllerThumbpad(i).x(), 2) + pow(hmd_manager->GetControllerThumbpad(i).y(), 2));
+                        b_pressed = hmd_manager->GetControllerThumbpadPressed(i) && (dist < 0.3f);
+                        b_hover = hmd_manager->GetControllerThumbpadTouched(i) && (dist < 0.3f);
                     }
                     else if (j == 1) {
-                        //App button pocketspace
+                        //App button home
                         b_pressed = hmd_manager->GetControllerMenuPressed(i);
                     }
                 }
@@ -449,7 +484,7 @@ void ControllerManager::UpdateControllers()
                         //b_hover = hmd_manager->GetControllerThumbpadTouched(i); //Can't hover with trigger
                     }
                     else if (j == 1) {
-                        //App button pocketspace
+                        //App button home
                         b_pressed = hmd_manager->GetControllerMenuPressed(i);
                     }
                 }
@@ -495,8 +530,9 @@ void ControllerManager::UpdateControllers()
                 float t_val = 0.0f;
 
                 if (hmd_manager->GetHMDType() == "daydream"){
-                    t_val = (j == 0 && hmd_manager->GetControllerThumbpadTouched(i)) ? 0.5f:0.0f;
-                    t_val = (j == 0 && hmd_manager->GetControllerThumbpadPressed(i)) ? 1.0f:t_val;
+                    float dist = sqrt(pow(hmd_manager->GetControllerThumbpad(i).x(), 2) + pow(hmd_manager->GetControllerThumbpad(i).y(), 2));
+                    t_val = (j == 0 && hmd_manager->GetControllerThumbpadTouched(i) && dist < 0.3f) ? 0.5f:0.0f;
+                    t_val = (j == 0 && hmd_manager->GetControllerThumbpadPressed(i) && dist < 0.3f) ? 1.0f:t_val;
                 }
 
                 if (hmd_manager->GetHMDType() == "go" || hmd_manager->GetHMDType() == "gear"){

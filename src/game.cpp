@@ -12,8 +12,10 @@ Game::Game() :
     gamepad_button_press(false),
     draw_cursor(false),
     cursor_active(-1),
-    rmb_held(false)
+    rmb_held(false),
+    delta_time(0.0f)
 {
+    deltat_time.start();
     player = new Player();
 
 #ifdef __ANDROID__
@@ -46,10 +48,13 @@ Game::Game() :
     bookmarks->LoadBookmarks();
     bookmarks->LoadWorkspaces();
 
-    controller_manager = new ControllerManager();
-    virtualkeyboard = new VirtualKeyboard();
+    controller_manager = new ControllerManager();    
     env = new Environment();
     multi_players = new MultiPlayerManager();
+
+    virtualmenu = new VirtualMenu();
+    virtualmenu->SetBookmarkManager(bookmarks);
+    virtualmenu->SetMultiPlayerManager(multi_players);
 
     global_uuid = 0;
     state = JVR_STATE_DEFAULT;
@@ -66,7 +71,7 @@ Game::Game() :
     unit_rotate_amount = QVector<float>({90.0f, 15.0f, 5.0f, 1.0f});
     unit_scale_amount = QVector<float>({1.0f, 0.1f, 0.01f, 0.001f});
 
-    WebAsset::LoadAuthData();   
+    WebAsset::LoadAuthData();
     AssetImage::initializeGL();
 
     Initialize();
@@ -91,14 +96,16 @@ Game::~Game()
     SoundManager::StopAll();
     env->Shutdown();
 
-    //save settings    
+    //save settings
     SettingsManager::SaveSettings();
 
     //    qDebug() << "Game::DoExitNow()";
-    TextureManager::Clear();    
+    TextureManager::Clear();
 
+#ifndef __ANDROID__
     //access filtered cubemap thing
     FilteredCubemapManager::GetSingleton()->SetShutdown(true);
+#endif
 
     MathUtil::FlushErrorLog();
 
@@ -121,7 +128,7 @@ void Game::CheckInternetConnection(QNetworkReply *reply)
     if(reply->bytesAvailable() && !internet_connected)
     {
         internet_connected = true;
-        if (env) env->ReloadRoom();
+        //if (env) env->ReloadRoom();
     }
     else if (!reply->bytesAvailable() && internet_connected)
     {
@@ -159,8 +166,6 @@ void Game::Initialize()
     const float s = 0.02f * 2.5f;
     info_text_geom.SetFixedSize(true, s);
     info2_text_geom.SetFixedSize(true, s);
-    speaking_text_geom.SetFixedSize(true, s);
-	recording_text_geom.SetFixedSize(true, s);     
 
     //TextureManager::Initialize();
 
@@ -169,8 +174,10 @@ void Game::Initialize()
     bool cache_setting = WebAsset::GetUseCache();
     WebAsset::SetUseCache(cache_setting);
 
+#ifndef __ANDROID__
     FilteredCubemapManager* cubemap_manager = FilteredCubemapManager::GetSingleton();
     cubemap_manager->Initialize();
+#endif
 }
 
 void Game::AddPrivateWebsurface()
@@ -180,25 +187,26 @@ void Game::AddPrivateWebsurface()
 
     const QString u = SettingsManager::GetWebsurfaceURL();
 
-    p.asset = (AbstractWebSurface*)new AssetWebSurface();    
-    p.asset->SetS("id", "__menu_web_id");
-    p.asset->SetWidth(1366);
-    p.asset->SetHeight(768);
-    p.asset->SetB("_save_to_markup", false);
+    p.asset = (AbstractWebSurface*)new AssetWebSurface();
+    p.asset->GetProperties()->SetID("__web_id");
+    p.asset->GetProperties()->SetWidth(1366);
+    p.asset->GetProperties()->SetHeight(768);
+    p.asset->GetProperties()->SetSaveToMarkup(false);
     p.asset->SetSrc(u, u);
 
     p.plane_obj = new AssetObject();
     p.plane_obj->SetSrc(MathUtil::GetApplicationURL(), "assets/primitives/plane.obj");
-    p.plane_obj->Load();    
+    p.plane_obj->Load();
 
     p.obj = new RoomObject();
-    p.obj->SetType("object");
-    p.obj->SetS("id", "plane");
-    p.obj->SetS("js_id", "__menu_plane" + QString::number(index));
-    p.obj->SetB("lighting", false);
-    p.obj->SetS("websurface_id", "__menu_web_id" + QString::number(index));
-    p.obj->SetS("cull_face", "none");
-    p.obj->SetS("visible", "false");
+    p.obj->SetType(TYPE_OBJECT);
+    p.obj->SetInterfaceObject(true);
+    p.obj->GetProperties()->SetID("plane");
+    p.obj->GetProperties()->SetJSID("__plane" + QString::number(index));
+    p.obj->GetProperties()->SetLighting(false);
+    p.obj->GetProperties()->SetWebsurfaceID("__web_id" + QString::number(index));
+    p.obj->GetProperties()->SetCullFace("none");
+    p.obj->GetProperties()->SetVisible("false");
     p.obj->SetAssetObject(p.plane_obj);
     p.obj->SetAssetWebSurface(p.asset);
 
@@ -239,15 +247,16 @@ void Game::SetPrivateWebsurfacesVisible(const bool b)
                 QMatrix4x4 xform = player->GetTransform();
                 const float angle = -(float(i%5) - float(qMin(private_websurfaces.size()-1, 4))/2.0f) * 45.0f;
                 xform.rotate(angle, 0, 1, 0);
-                xform.translate(0,player->GetV("eye_point").y() - player->GetV("pos").y() + (i/5) * 0.5f - 0.2f,-1.0f);
+                xform.translate(0,player->GetProperties()->GetEyePoint().y()
+                                - player->GetProperties()->GetPos()->toQVector3D().y() + (i/5) * 0.5f - 0.2f,-1.0f);
 
-                o->SetV("pos", xform.map(QVector3D(0,0,0)));
-                o->SetV("xdir", xform.mapVector(QVector3D(1,0,0)));
-                o->SetV("ydir", xform.mapVector(QVector3D(0,1,0)));
-                o->SetV("zdir", xform.mapVector(QVector3D(0,0,1)));
-                o->SetV("scale", QVector3D(0.8f, 0.45f, 1.0f));
+                o->GetProperties()->SetPos(xform.map(QVector3D(0,0,0)));
+                o->GetProperties()->SetXDir(xform.mapVector(QVector3D(1,0,0)));
+                o->GetProperties()->SetYDir(xform.mapVector(QVector3D(0,1,0)));
+                o->GetProperties()->SetZDir(xform.mapVector(QVector3D(0,0,1)));
+                o->GetProperties()->SetScale(QVector3D(0.8f, 0.45f, 1.0f));
             }
-            o->SetB("visible", b);
+            o->GetProperties()->SetVisible(b);
         }
     }
 }
@@ -255,7 +264,7 @@ void Game::SetPrivateWebsurfacesVisible(const bool b)
 bool Game::GetPrivateWebsurfacesVisible() const
 {
     for (int i=0; i<private_websurfaces.size(); ++i) {
-        if (private_websurfaces[i].obj && private_websurfaces[i].obj->GetB("visible")) {
+        if (private_websurfaces[i].obj && private_websurfaces[i].obj->GetProperties()->GetVisible()) {
             return true;
         }
     }
@@ -271,7 +280,9 @@ void Game::UpdatePrivateWebsurfaces()
                 a->SetStarted(true);
                 a->Load();
             }
-            a->GetWebView()->update();
+            if (a->GetWebView()) {
+                a->GetWebView()->update();
+            }
             a->UpdateGL();
         }
     }
@@ -280,6 +291,13 @@ void Game::UpdatePrivateWebsurfaces()
 void Game::DrawPrivateWebsurfacesGL(QPointer <AssetShader> shader)
 {
     for (int i=0; i<private_websurfaces.size(); ++i) {
+        if (private_websurfaces[i].asset) {
+            private_websurfaces[i].asset->UpdateGL();
+        }
+        if (private_websurfaces[i].plane_obj) {
+            private_websurfaces[i].plane_obj->Update();
+            private_websurfaces[i].plane_obj->UpdateGL();
+        }
         if (private_websurfaces[i].obj) {
 //            qDebug() << "draw" << i;
             private_websurfaces[i].obj->Update(0.0f);
@@ -295,11 +313,18 @@ void Game::Update()
     }
 
 #ifdef __ANDROID__
-    if (network_timer.elapsed() > 10000){ //Request every 10 seconds
+    if (network_timer.elapsed() > 60000){ //Request every minute
         RequestInternetConnection();
         network_timer.restart();
     }
-#endif      
+#endif
+
+    //delta_t processing
+    delta_time = 0.0;
+    if (deltat_time.elapsed() > 0) {
+        delta_time = double(deltat_time.restart()) / 1000.0;
+    }
+    player->SetDeltaTime(delta_time);    
 
     //deallocation includes opengl delete calls
     if (!do_exit) {
@@ -310,22 +335,20 @@ void Game::Update()
     UpdateImportList();
 
     //Controllers (gamepad, Touch, Vive)
-    UpdateControllers();
-
-    //Menu stuff
-    UpdateMenuObject();
+    UpdateControllers();   
 
     //Update private websurfaces
     UpdatePrivateWebsurfaces();
 
-    //update virtual keyboard
-#ifdef __ANDROID__
-    if (controller_manager->GetHMDManager() && controller_manager->GetHMDManager()->GetEnabled())
-#endif
-        UpdateVirtualKeyboard();
+    //update virtual menu
+    UpdateVirtualMenu();   
 
     //Update AssetRecordings
     UpdateAssetRecordings();
+
+#ifdef __ANDROID__
+    JNIUtil::UpdateCookies();
+#endif
 
     //Update "player"
     RoomObject::SetDrawAssetObjectTeleport(state == JVR_STATE_INTERACT_TELEPORT);
@@ -333,7 +356,7 @@ void Game::Update()
     QPointer <Room> r = env->GetCurRoom();
     if (r) {
         const QPair <QVector3D, QVector3D> reset_volume = r->GetResetVolume();
-        const QVector3D p = player->GetV("pos");
+        const QVector3D p = player->GetProperties()->GetPos()->toQVector3D();
         if (fadestate == FADE_NONE &&
                 p.x() > qMin(reset_volume.first.x(), reset_volume.second.x()) &&
                 p.y() > qMin(reset_volume.first.y(), reset_volume.second.y()) &&
@@ -345,22 +368,23 @@ void Game::Update()
         }
 
         //update player's movement in the current room
-        const float walk_speed = r->GetF("walk_speed");
-        const float run_speed = r->GetF("run_speed");
-        player->Update((player->GetB("flying") || player->GetB("running")) ? run_speed : walk_speed);
+        const float walk_speed = r->GetProperties()->GetWalkSpeed();
+        const float run_speed = r->GetProperties()->GetRunSpeed();
+        player->Update((player->GetFlying() ||
+                        player->GetRunning()) ? run_speed : walk_speed);
 
         //auto-load any portals?
         QHash <QString, QPointer <RoomObject> > & envobjects = r->GetRoomObjects();
         for (auto & p : envobjects) {
-            if (p && p->GetType() == "link") {
-                if (!p->GetB("open") && p->GetB("auto_load") && !p->GetB("_auto_load_triggered")) {
-                    p->SetB("open", true);
-                    p->SetB("_auto_load_triggered", true);
-                    env->AddRoom(p);                    
+            if (p && p->GetType() == TYPE_LINK) {
+                if (!p->GetProperties()->GetOpen() && p->GetProperties()->GetAutoLoad() && !p->GetProperties()->GetAutoLoadTriggered()) {
+                    p->GetProperties()->SetOpen(true);
+                    p->GetProperties()->SetAutoLoadTriggered(true);
+                    env->AddRoom(p);
                 }
             }
-        }       
-    }      
+        }
+    }
 
     //update cursors
     UpdateCursorAndTeleportTransforms();
@@ -371,29 +395,31 @@ void Game::Update()
     //update follow mode
     UpdateFollowMode();
 
+    WebAsset::SetUseCache(SettingsManager::GetCacheEnabled());
+
+    //update VOIP
+    UpdateAudio();
+
     //update assets
-    UpdateAssets();   
+    UpdateAssets();
 
     //update multiplayers
     UpdateMultiplayer();
 
-    //update VOIP
-    UpdateMedia();
-
     //do environment::update1 and process portal crossings
     QPointer <Room> r0 = env->GetCurRoom();
-    env->Update1(player);
+    env->Update1(player, multi_players);
     QPointer <Room> r1 = env->GetCurRoom();
 
-    //clear selection if player moved
+    //clear selection if player moved and hide menu
     if (r0 != r1) {
         ClearSelection(0);
         ClearSelection(1);
-        SetPrivateWebsurfacesVisible(false);
+        SetPrivateWebsurfacesVisible(false);       
     }
 
     if (r1) {
-        player->SetS("url", r1->GetS("url"));
+        player->GetProperties()->SetURL(r1->GetProperties()->GetURL());
     }
 }
 
@@ -401,23 +427,23 @@ float Game::UpdateCursorRaycast(const QMatrix4x4 transform, const int cursor_ind
 {
 //    qDebug() << "Game::UpdateCursorRaycast" << transform;
     //Ray emit position is defined by column index 3 (position)
-    //Ray emit direction is defined by negation of column index 2 (z basis vector)    
+    //Ray emit direction is defined by negation of column index 2 (z basis vector)
     const QVector3D ray_p = transform.column(3).toVector3D();
     const QVector3D ray_d = transform.column(2).toVector3D();
 
     struct IntersectionElement {
-        QPointer <RoomObject> envobject;
-        QPointer <RoomObject> kbobject;
+        QPointer <RoomObject> envobject;        
         QPointer <RoomObject> webobject;
+        QPointer <RoomObject> menuobject;
         QVector3D v;
         QVector3D n;
         QVector2D uv;
     };
 
-    QPointer <Room> r = env->GetCurRoom();    
+    QPointer <Room> r = env->GetCurRoom();
     QList <IntersectionElement> intersection_list;
     QHash <QString, QPointer <RoomObject> > & envobjects = r->GetRoomObjects();
-    const bool room_overrides_teleport = r->GetB("_teleport_override");
+    const bool room_overrides_teleport = r->GetProperties()->GetTeleportOverride();
 
     //intersect with room template
     QPointer <RoomTemplate> room_temp = r->GetRoomTemplate();
@@ -446,13 +472,13 @@ float Game::UpdateCursorRaycast(const QMatrix4x4 transform, const int cursor_ind
             continue;
         }
 
-        //56.0 - even invisible walls should keep player in (e.g. in pocketspace)
-        if (o->GetS("js_id").left(6) == "__menu" && !o->GetB("visible")) {
+        //56.0 - even invisible walls should keep player in
+        if (o->GetInterfaceObject() && !o->GetProperties()->GetVisible()) {
             continue;
         }
 
         //Room teleport overrides
-        if (room_overrides_teleport && o->GetTeleportAssetObject() == 0 && o->GetType() == "object") {
+        if (room_overrides_teleport && o->GetTeleportAssetObject() == 0 && o->GetType() == TYPE_OBJECT) {
             continue;
         }
 
@@ -476,7 +502,7 @@ float Game::UpdateCursorRaycast(const QMatrix4x4 transform, const int cursor_ind
         for (int j=0; j<private_websurfaces.size(); ++j) {
             QList <QVector3D> vs;
             QList <QVector3D> ns;
-            QList <QVector2D> uvs;
+            QList <QVector2D> uvs;            
             if (private_websurfaces[j].obj->GetRaycastIntersection(transform, vs, ns, uvs)) {
                 for (int i=0; i<vs.size(); ++i) {
                     IntersectionElement intersection_element;
@@ -490,29 +516,28 @@ float Game::UpdateCursorRaycast(const QMatrix4x4 transform, const int cursor_ind
         }
     }
 
-    //virtual keyboard
-    if (virtualkeyboard->GetVisible()) {
-        QHash <QString, QPointer <RoomObject> > & kbobjects = virtualkeyboard->GetEnvObjects();
-        QHash <QString, QPointer <RoomObject> >::iterator it;
-        for (it = kbobjects.begin(); it!=kbobjects.end(); ++it) {
-            if (it.value()) {
+    //virtual menu
+    if (virtualmenu->GetVisible()) {
+        QHash <QString, QPointer <RoomObject> > & os = virtualmenu->GetEnvObjects();
+        for (QPointer <RoomObject> & o : os) {
+            if (o) {
                 QList <QVector3D> vs;
                 QList <QVector3D> ns;
                 QList <QVector2D> uvs;
-                if (it.value()->GetRaycastIntersection(transform, vs, ns, uvs)) {
+                if (o->GetRaycastIntersection(transform, vs, ns, uvs)) {
                     for (int i=0; i<vs.size(); ++i) {
                         IntersectionElement intersection_element;
-                        intersection_element.kbobject = it.value();
+                        intersection_element.menuobject = o;
                         intersection_element.v = vs[i];
                         intersection_element.n = ns[i];
                         intersection_element.uv = uvs[i];
                         intersection_list.push_back(intersection_element);
-//                        qDebug() << "doing virtual kb test?" << virtualkeyboard->GetVisible() << it.value()->GetJSID();
+//                        qDebug() << "menu hit" << virtualmenu->GetVisible() << o->GetProperties()->GetJSID();
                     }
                 }
             }
         }
-    }  
+    }
 
     //find closest intersection point as the object for interaction
     float min_dist = FLT_MAX;
@@ -528,7 +553,7 @@ float Game::UpdateCursorRaycast(const QMatrix4x4 transform, const int cursor_ind
         }
     }
 
-    //set user's cursor based on nearest interaction point   
+    //set user's cursor based on nearest interaction point
     bool clear_websurface = true;
     bool clear_video = true;
 
@@ -544,22 +569,22 @@ float Game::UpdateCursorRaycast(const QMatrix4x4 transform, const int cursor_ind
             z = -z;
         }
 
-        if (fabsf(QVector3D::dotProduct(y, z)) > 0.9f) {            
+        if (fabsf(QVector3D::dotProduct(y, z)) > 0.9f) {
             x = player->GetRightDir();
             y = QVector3D::crossProduct(z, x).normalized();
             x = QVector3D::crossProduct(y, z).normalized();
         }
-        else {            
+        else {
             x = QVector3D::crossProduct(y, z).normalized();
             y = QVector3D::crossProduct(z, x).normalized();
-        }        
+        }
 
         player->SetCursorXDir(x, cursor_index);
         player->SetCursorYDir(y, cursor_index);
         player->SetCursorZDir(z, cursor_index);
 
         if (intersection_list[min_index].envobject) {
-            player->SetCursorObject(intersection_list[min_index].envobject->GetS("js_id"), cursor_index);
+            player->SetCursorObject(intersection_list[min_index].envobject->GetProperties()->GetJSID(), cursor_index);
 
             const QPointer <AbstractWebSurface> web = intersection_list[min_index].envobject->GetAssetWebSurface();
             const QPointer <AssetVideo> vid = intersection_list[min_index].envobject->GetAssetVideo();
@@ -577,27 +602,27 @@ float Game::UpdateCursorRaycast(const QMatrix4x4 transform, const int cursor_ind
                 video_selected[cursor_index] = vid;
                 clear_video = false;
             }
-        }
-        else if (intersection_list[min_index].kbobject) {
-            player->SetCursorObject(intersection_list[min_index].kbobject->GetS("js_id"), cursor_index);
+        }        
+        else if (intersection_list[min_index].menuobject) {
+            player->SetCursorObject(intersection_list[min_index].menuobject->GetProperties()->GetJSID(), cursor_index);
         }
         else if (intersection_list[min_index].webobject) {
-            player->SetCursorObject(intersection_list[min_index].webobject->GetS("js_id"), cursor_index);
+            player->SetCursorObject(intersection_list[min_index].webobject->GetProperties()->GetJSID(), cursor_index);
             websurface_selected[cursor_index] = intersection_list[min_index].webobject->GetAssetWebSurface();
             clear_websurface = false;
         }
 
         player->SetCursorActive(true, cursor_index);
 
-        virtualkeyboard->SetSelected(intersection_list[min_index].kbobject, cursor_index);
         cursor_uv[cursor_index] = QPointF(intersection_list[min_index].uv.x(), intersection_list[min_index].uv.y());
     }
     else {
         player->SetCursorObject("", cursor_index);
-        player->SetCursorPos(player->GetV("eye_point") + player->GetV("view_dir"), cursor_index);
-        player->SetCursorXDir(QVector3D::crossProduct(player->GetV("up_dir"), -player->GetV("view_dir")).normalized(), cursor_index);
-        player->SetCursorYDir(player->GetV("up_dir"), cursor_index);
-        player->SetCursorZDir(-player->GetV("view_dir"), cursor_index);
+        player->SetCursorPos(player->GetProperties()->GetEyePoint() + player->GetProperties()->GetViewDir()->toQVector3D(), cursor_index);
+        player->SetCursorXDir(QVector3D::crossProduct(player->GetProperties()->GetUpDir()->toQVector3D(),
+                                                      -player->GetProperties()->GetViewDir()->toQVector3D()).normalized(), cursor_index);
+        player->SetCursorYDir(player->GetProperties()->GetUpDir()->toQVector3D(), cursor_index);
+        player->SetCursorZDir(-player->GetProperties()->GetViewDir()->toQVector3D(), cursor_index);
         player->SetCursorScale(0.0f, cursor_index);
         player->SetCursorActive(false, cursor_index);
 
@@ -636,7 +661,7 @@ void Game::DrawFadingGL()
     shader->SetUseClipPlane(false);
     shader->SetFogEnabled(false);
 
-    const QVector3D v = player->GetV("eye_point");
+    const QVector3D v = player->GetProperties()->GetEyePoint();
     const float s = (GetCurrentNearDist()+GetCurrentFarDist())*0.5f; //60.0 - cube needs to fit within clip planes
 
     MathUtil::PushModelMatrix();
@@ -644,8 +669,8 @@ void Game::DrawFadingGL()
     MathUtil::ModelMatrix().scale(s);
 
     switch (fadestate) {
-    case FADE_NONE:        
-        break;    
+    case FADE_NONE:
+        break;
 
     case FADE_RELOAD1:
     case FADE_RELOAD2:
@@ -708,7 +733,7 @@ void Game::DrawFadingGL()
         renderer->PushAbstractRenderCommand(a);
 
         if (fade_time.elapsed() >= duration) {
-            switch (fadestate) {            
+            switch (fadestate) {
             case FADE_RELOAD1:
                 fade_time.start();
                 fadestate = FADE_RELOAD2;
@@ -760,7 +785,7 @@ void Game::DrawFadingGL()
             case FADE_POCKET1:
                 fade_time.start();
                 fadestate = FADE_POCKET2;
-                EscapeToPocketspace();
+                EscapeToHome();
                 break;
             case FADE_POCKET2:
                 fadestate = FADE_NONE;
@@ -799,8 +824,8 @@ void Game::ComputeMouseCursorTransform(const QSize p_windowSize, const QPointF p
     QMatrix4x4 persp;
 
     QPointer <Room> r = env->GetCurRoom();
-    const float near_dist = r->GetF("near_dist");
-    const float far_dist = r->GetF("far_dist");
+    const float near_dist = r->GetProperties()->GetNearDist();
+    const float far_dist = r->GetProperties()->GetFarDist();
 
     if (menu_ops.hmd) { //54.10 hack: forces cursor to remain at centre (look to click)
         persp.perspective(0.01f, float(p_windowSize.width()) / float(p_windowSize.height()), near_dist, far_dist);
@@ -810,7 +835,7 @@ void Game::ComputeMouseCursorTransform(const QSize p_windowSize, const QPointF p
     }
 
     for (uint32_t i = 0; i < 16; ++i)
-    {       
+    {
         modelMatrix[i] = (MathUtil::ModelMatrix() * MathUtil::ViewMatrix()).constData()[i];
         projMatrix[i] = persp.constData()[i]; //52.11 - bugfix for skewed projection matrices, make ray come out from centre
     }
@@ -823,7 +848,7 @@ void Game::ComputeMouseCursorTransform(const QSize p_windowSize, const QPointF p
     GLdouble new_x, new_y, new_z;
     MathUtil::UnProject(p_mousePos.x(), p_mousePos.y(), 0.9999f, modelMatrix, projMatrix, viewport, &new_x, &new_y, &new_z);
 
-    const QVector3D z = (QVector3D(new_x, new_y, new_z) - player->GetV("eye_point")).normalized();
+    const QVector3D z = (QVector3D(new_x, new_y, new_z) - player->GetProperties()->GetEyePoint()).normalized();
     const QVector3D x = QVector3D::crossProduct(QVector3D(0,1,0), z).normalized();
     const QVector3D y = QVector3D::crossProduct(x, z).normalized();
 
@@ -831,7 +856,7 @@ void Game::ComputeMouseCursorTransform(const QSize p_windowSize, const QPointF p
     m.setColumn(0, x);
     m.setColumn(1, y);
     m.setColumn(2, z);
-    m.setColumn(3, player->GetV("eye_point"));
+    m.setColumn(3, player->GetProperties()->GetEyePoint());
     m.setRow(3, QVector4D(0,0,0,1));
 
 //    qDebug() << "Game::ComputeMouseCursorTransform()" << cursor_win << new_x << new_y << new_z << m;
@@ -844,7 +869,7 @@ void Game::DrawGL(const float ipd, const QMatrix4x4 head_xform, const bool set_m
     QPointer <AssetShader> trans_shader = Room::GetTransparencyShader();
     if (trans_shader == NULL || !trans_shader->GetCompiled()) {
         return;
-    }   
+    }
 
     //setup camera
     if (!set_modelmatrix) {
@@ -868,7 +893,7 @@ void Game::DrawGL(const float ipd, const QMatrix4x4 head_xform, const bool set_m
     windowSize = p_windowSize;
 #endif
 
-    // Draw current room    
+    // Draw current room
     env->draw_current_room(multi_players, player, true);
 
     // TODO: This is temporaily disabled while I implement the new system using Bullet Physics
@@ -883,9 +908,9 @@ void Game::DrawGL(const float ipd, const QMatrix4x4 head_xform, const bool set_m
 
     // Update the cursor (Object ID, normal, world-space location)
     QPointer <Room> r = env->GetCurRoom();
-    RendererInterface::m_pimpl->BeginScope(RENDERER::RENDER_SCOPE::VIRTUAL_KEYBOARD);
+    RendererInterface::m_pimpl->BeginScope(RENDERER::RENDER_SCOPE::VIRTUAL_MENU);
     r->BindShader(Room::GetTransparencyShader());
-    DrawVirtualKeyboard();
+    DrawVirtualMenu();    
     r->UnbindShader(Room::GetTransparencyShader());
     RendererInterface::m_pimpl->EndCurrentScope();
 
@@ -909,19 +934,20 @@ void Game::DrawGL(const float ipd, const QMatrix4x4 head_xform, const bool set_m
         GhostFrame frame1;
 
         frame1.time_sec = 1.0f;
-        frame1.pos = player->GetV("pos");
-        frame1.head_xform.setColumn(0, QVector3D::crossProduct(player->GetV("up_dir"), player->GetV("view_dir")).normalized());
-        frame1.head_xform.setColumn(1, player->GetV("up_dir"));
-        frame1.head_xform.setColumn(2, player->GetV("view_dir"));
-        frame1.head_xform.setColumn(3, QVector4D(player->GetV("local_head_pos"), 1));
-        frame1.dir = player->GetV("dir");
+        frame1.pos = player->GetProperties()->GetPos()->toQVector3D();
+        frame1.head_xform.setColumn(0, QVector3D::crossProduct(player->GetProperties()->GetUpDir()->toQVector3D(),
+                                                               player->GetProperties()->GetViewDir()->toQVector3D()).normalized());
+        frame1.head_xform.setColumn(1, player->GetProperties()->GetUpDir()->toQVector3D());
+        frame1.head_xform.setColumn(2, player->GetProperties()->GetViewDir()->toQVector3D());
+        frame1.head_xform.setColumn(3, QVector4D(player->GetProperties()->GetLocalHeadPos()->toQVector3D(), 1));
+        frame1.dir = player->GetProperties()->GetDir()->toQVector3D();
         frame1.dir.setY(0.0f);
         frame1.dir.normalize();
         frame1.hands.first = player->GetHand(0);
         frame1.hands.second = player->GetHand(1);
 
-        player_avatar->SetS("hmd_type", player->GetS("hmd_type"));
-        player_avatar->SetV("pos", player->GetV("pos"));
+        player_avatar->SetHMDType(player->GetHMDType());
+        player_avatar->GetProperties()->SetPos(player->GetProperties()->GetPos()->toQVector3D());
 
         // set first and last frames to be the same (current packet)
         frame0 = frame1;
@@ -933,8 +959,8 @@ void Game::DrawGL(const float ipd, const QMatrix4x4 head_xform, const bool set_m
         player_avatar->GetAssetGhost()->SetFromFrames(frames, 1000);
 
         // ghost needs to be processed
-        player_avatar->Update(player->GetF("delta_time"));
-        player_avatar->DrawGL(shader, true, player->GetV("pos"));
+        player_avatar->Update(player->GetDeltaTime());
+        player_avatar->DrawGL(shader, true, player->GetProperties()->GetPos()->toQVector3D());
 
         r->UnbindShader(shader);
     }
@@ -942,7 +968,7 @@ void Game::DrawGL(const float ipd, const QMatrix4x4 head_xform, const bool set_m
 
     //draw controllers (vive, oculus touch, Leap Motion, etc.)
     RendererInterface::m_pimpl->BeginScope(RENDERER::RENDER_SCOPE::CONTROLLERS);
-    if (controller_manager) {        
+    if (controller_manager) {
         QPointer <AssetShader> shader = Room::GetTransparencyShader();
         if (r->GetAssetShader()) {
             shader = r->GetAssetShader();
@@ -980,8 +1006,8 @@ void Game::initializeGL()
     //icons for menu
     //menuwidget.initializeGL();
 
-	//images
-	//qDebug() << "Game::initializeGL() - Initializing AssetImages...";
+    //images
+    //qDebug() << "Game::initializeGL() - Initializing AssetImages...";
     //AssetImage::initializeGL();
 
     //textgeom
@@ -1009,7 +1035,7 @@ void Game::mouseMoveEvent(QMouseEvent * e, const float x, const float y, const i
 
     const bool left_btn = ((e->buttons() & Qt::LeftButton) > 0);
 
-    QPointer <Room> r = env->GetCurRoom();        
+    QPointer <Room> r = env->GetCurRoom();
     QPointer <RoomObject> selected_obj = r->GetRoomObject(selected[cursor_index]);
     QPointer <RoomObject> cursor_obj = r->GetRoomObject(player->GetCursorObject(cursor_index));
 
@@ -1036,9 +1062,9 @@ void Game::mouseMoveEvent(QMouseEvent * e, const float x, const float y, const i
         }
 #endif
 
-        r->CallJSFunction("room.onMouseMove", player);
+        r->CallJSFunction("room.onMouseMove", player, multi_players);
         if (left_btn) {
-            r->CallJSFunction("room.onMouseDrag", player);
+            r->CallJSFunction("room.onMouseDrag", player, multi_players);
         }
 
 //        qDebug() << "Game::mouseMoveEvent" << selected[cursor_index] << envobjects.contains(selected[cursor_index]);
@@ -1070,8 +1096,8 @@ void Game::mouseMoveEvent(QMouseEvent * e, const float x, const float y, const i
                 return;
             }
 
-            const QPoint cursor_pos(float(websurface_selected[cursor_index]->GetI("width"))*cursor_uv[cursor_index].x(),
-                                    float(websurface_selected[cursor_index]->GetI("height"))*cursor_uv[cursor_index].y());
+            const QPoint cursor_pos(float(websurface_selected[cursor_index]->GetProperties()->GetWidth())*cursor_uv[cursor_index].x(),
+                                    float(websurface_selected[cursor_index]->GetProperties()->GetHeight())*cursor_uv[cursor_index].y());
             QMouseEvent e2(QEvent::MouseMove, cursor_pos, e->button(), e->buttons(), e->modifiers());
 
             websurface_selected[cursor_index]->mouseMoveEvent(&e2, cursor_index);
@@ -1087,25 +1113,31 @@ void Game::mouseMoveEvent(QMouseEvent * e, const float x, const float y, const i
         }
 #else
         if (websurface_selected[cursor_index]){
-            const QPoint cursor_pos(float(websurface_selected[cursor_index]->GetI("width"))*cursor_uv[cursor_index].x(),
-                                    float(websurface_selected[cursor_index]->GetI("height"))*cursor_uv[cursor_index].y());
+            const QPoint cursor_pos(float(websurface_selected[cursor_index]->GetProperties()->GetWidth())*cursor_uv[cursor_index].x(),
+                                    float(websurface_selected[cursor_index]->GetProperties()->GetHeight())*cursor_uv[cursor_index].y());
             //Release 60.0 - note: player spin/tilt has to happen before this, as this method does not seem to contnue after this call
             QMouseEvent e2(QEvent::MouseMove, cursor_pos, e->button(), e->buttons(), e->modifiers());
             websurface_selected[cursor_index]->mouseMoveEvent(&e2, cursor_index);
+
+            QString url_str = websurface_selected[cursor_index]->GetLinkClicked(cursor_index).toString().trimmed();
+            if (state != JVR_STATE_DRAGDROP && !(url_str == websurface_selected[cursor_index]->GetURL() || url_str == "") && ((e->buttons() & Qt::RightButton) > 0) && rmb_held_time.elapsed() > 100) {
+                DragAndDropFromWebsurface(keys[Qt::Key_Control]?"Drag+Drop":"Drag+Pin", cursor_index);
+                //websurface_selected[cursor_index].clear();
+            }
         }
 #endif
         else if (cursor_obj) {
 
             //qDebug() << player->GetCursorObject(cursor_index) << o->GetJSID() << o->GetOriginalURL() << o->GetWebSurfaceID() << o->GetUUID();
-            if (websurface_selected[cursor_index] && cursor_obj->GetType() == "object" && cursor_obj->GetAssetWebSurface()) {
+            if (websurface_selected[cursor_index] && cursor_obj->GetType() == TYPE_OBJECT && cursor_obj->GetAssetWebSurface()) {
                 //if websurface is still on about:blank, load it
 //                if (websurface_selected[cursor_index]->GetURL() == "about:blank") {
 //                    websurface_selected[cursor_index]->SetURL(websurface_selected[cursor_index]->GetS("src"));
 //                }
 
                 //52.8 - disable mousemove on websurfaces to prevent native drag and drop operation
-                QPoint cursor_pos(float(websurface_selected[cursor_index]->GetI("width"))*cursor_uv[cursor_index].x(),
-                                  float(websurface_selected[cursor_index]->GetI("height"))*cursor_uv[cursor_index].y());
+                QPoint cursor_pos(float(websurface_selected[cursor_index]->GetProperties()->GetWidth())*cursor_uv[cursor_index].x(),
+                                  float(websurface_selected[cursor_index]->GetProperties()->GetHeight())*cursor_uv[cursor_index].y());
 
 #ifdef __ANDROID__
                 QMouseEvent e2(QEvent::MouseMove, cursor_pos + QPointF(x, y), e->button(), e->buttons(), Qt::NoModifier);
@@ -1116,7 +1148,7 @@ void Game::mouseMoveEvent(QMouseEvent * e, const float x, const float y, const i
                 websurface_selected[cursor_index]->mouseMoveEvent(&e2, cursor_index);
 #endif
             }
-            else if (video_selected[cursor_index] && (cursor_obj->GetType() == "video" || cursor_obj->GetType() == "object") && cursor_obj->GetAssetVideo()) {
+            else if (video_selected[cursor_index] && (cursor_obj->GetType() == TYPE_VIDEO || cursor_obj->GetType() == TYPE_OBJECT) && cursor_obj->GetAssetVideo()) {
                 if (left_btn) {
                     QPoint cursor_pos(float(video_selected[cursor_index]->GetWidth(cursor_obj->GetMediaContext()))*cursor_uv[cursor_index].x(),
                                       float(video_selected[cursor_index]->GetHeight(cursor_obj->GetMediaContext()))*cursor_uv[cursor_index].y());
@@ -1124,7 +1156,7 @@ void Game::mouseMoveEvent(QMouseEvent * e, const float x, const float y, const i
                     video_selected[cursor_index]->mouseMoveEvent(cursor_obj->GetMediaContext(), &e2);
                 }
             }
-        }       
+        }
 
         break;
 
@@ -1187,7 +1219,7 @@ void Game::mousePressEvent(QMouseEvent * e, const int cursor_index, const QSize 
 #else
 void Game::mousePressEvent(QMouseEvent * e, const int cursor_index, const QSize , const QPointF )
 #endif
-{   
+{
     if (e->button() == Qt::RightButton) {
         rmb_held = true;
         rmb_held_time.start();
@@ -1209,8 +1241,8 @@ void Game::mousePressEvent(QMouseEvent * e, const int cursor_index, const QSize 
         websurface_focused = true;
         focus_websurface = websurface_selected[cursor_index];
 
-        last_scroll = QPointF(float(websurface_selected[cursor_index]->GetI("width"))*cursor_uv[cursor_index].x(),
-                       float(websurface_selected[cursor_index]->GetI("height"))*cursor_uv[cursor_index].y());
+        last_scroll = QPointF(float(websurface_selected[cursor_index]->GetProperties()->GetWidth())*cursor_uv[cursor_index].x(),
+                       float(websurface_selected[cursor_index]->GetProperties()->GetHeight())*cursor_uv[cursor_index].y());
         focus_websurface_cursor_uv = last_scroll;
     }
     else{
@@ -1226,21 +1258,39 @@ void Game::mousePressEvent(QMouseEvent * e, const int cursor_index, const QSize 
     switch (state) {
     case JVR_STATE_DEFAULT:
         if (e->button() == Qt::LeftButton) {
-            r->CallJSFunction("room.onMouseDown", player);
+            r->CallJSFunction("room.onMouseDown", player, multi_players);
 
-            if (r->GetB("cursor_visible")) {
+            if (r->GetProperties()->GetCursorVisible()) {
                 SoundManager::Play(SOUND_CLICK1, false, player->GetCursorPos(cursor_index), 1.0f);
             }
 
             StartOpInteractionDefault(cursor_index);
         }
         else if (e->button() == Qt::MiddleButton) {
+            QPointer <RoomObject> o = r->GetRoomObject(player->GetCursorObject(cursor_index));
+            if (o && o->GetType() == TYPE_OBJECT && o->GetAssetWebSurface()) {
+                websurface_selected[cursor_index] = o->GetAssetWebSurface();
+                QPoint cursor_pos(float(websurface_selected[cursor_index]->GetProperties()->GetWidth())*cursor_uv[cursor_index].x(),
+                                  float(websurface_selected[cursor_index]->GetProperties()->GetHeight())*cursor_uv[cursor_index].y());
+                QMouseEvent e2(QEvent::MouseButtonPress, cursor_pos, Qt::MiddleButton, Qt::MiddleButton, Qt::NoModifier);
+                websurface_selected[cursor_index]->mousePressEvent(&e2, cursor_index);
+            }
             if (!controller_manager->GetUsingSpatiallyTrackedControllers() && GetAllowTeleport(cursor_index)) {
                 StartOpInteractionTeleport(cursor_index);
             }
         }
+        else if (e->button() == Qt::RightButton) {
+            QPointer <RoomObject> o = r->GetRoomObject(player->GetCursorObject(cursor_index));
+            if (o && o->GetType() == TYPE_OBJECT && o->GetAssetWebSurface()) {
+                websurface_selected[cursor_index] = o->GetAssetWebSurface();
+                QPoint cursor_pos(float(websurface_selected[cursor_index]->GetProperties()->GetWidth())*cursor_uv[cursor_index].x(),
+                                  float(websurface_selected[cursor_index]->GetProperties()->GetHeight())*cursor_uv[cursor_index].y());
+                QMouseEvent e2(QEvent::MouseButtonPress, cursor_pos, Qt::RightButton, Qt::RightButton, Qt::NoModifier);
+                websurface_selected[cursor_index]->mousePressEvent(&e2, cursor_index);
+            }
+        }
 
-        break;   
+        break;
 
     default:
         break;
@@ -1249,7 +1299,7 @@ void Game::mousePressEvent(QMouseEvent * e, const int cursor_index, const QSize 
 
 void Game::wheelEvent(QWheelEvent * e)
 {
-    QPointer <Room> r = env->GetCurRoom();    
+    QPointer <Room> r = env->GetCurRoom();
     QPointer <RoomObject> o = r->GetRoomObject(selected[0]);
 
     const int delta = ((e->delta() > 0) ? 1 : -1);
@@ -1266,7 +1316,7 @@ void Game::wheelEvent(QWheelEvent * e)
         if (o) {
             r->SelectAssetForObject(selected[0], (e->delta() > 0) ? 1 : -1);
             o->PlayCreateObject();
-            o->SetB("sync", true);
+            o->GetProperties()->SetSync(true);
         }
         break;
 
@@ -1314,20 +1364,20 @@ bool Game::GetAllowTeleport(const int cursor_index)
 //        }
 //    }
 
-    const float cursor_dist = (player->GetV("pos") - player->GetCursorPos(cursor_index)).length();
-    if (cursor_dist > r->GetF("teleport_max_dist")) {
+    const float cursor_dist = (player->GetProperties()->GetPos()->toQVector3D() - player->GetCursorPos(cursor_index)).length();
+    if (cursor_dist > r->GetProperties()->GetTeleportMaxDist()) {
         return false;
     }
-    if (cursor_dist < r->GetF("teleport_min_dist")) {
+    if (cursor_dist < r->GetProperties()->GetTeleportMinDist()) {
         return false;
     }
     if (websurface_selected[cursor_index]) {
         return false;
     }
-    if (o && o->GetType() != "link" && o->GetTeleportAssetObject() == 0 && r->GetB("_teleport_override")) {
+    if (o && o->GetType() != TYPE_LINK && o->GetTeleportAssetObject() == 0 && r->GetProperties()->GetTeleportOverride()) {
         return false;
     }
-    if (o && o->GetType() == "link" && (!o->GetB("active") || !o->GetB("open"))) {
+    if (o && o->GetType() == TYPE_LINK && (!o->GetProperties()->GetActive() || !o->GetProperties()->GetOpen())) {
         return false;
     }
     if (spatial_active[cursor_index]) {
@@ -1342,17 +1392,17 @@ void Game::mouseReleaseEvent(QMouseEvent * e, const int cursor_index, const QSiz
 #else
 void Game::mouseReleaseEvent(QMouseEvent * e, const int cursor_index, const QSize , const QPointF )
 #endif
-{   
+{
     const bool left_btn = (e->button() == Qt::LeftButton);
     if (e->button() == Qt::RightButton) {
         rmb_held = false;
     }
     teleport_portal = NULL;
 
-    QPointer <Room> r = env->GetCurRoom();        
+    QPointer <Room> r = env->GetCurRoom();
     QPointer <RoomObject> o = r->GetRoomObject(selected[cursor_index]);
 
-    if (r->GetB("cursor_visible")) {
+    if (r->GetProperties()->GetCursorVisible()) {
         SoundManager::Play(SOUND_CLICK2, false, player->GetCursorPos(cursor_index), 1.0f);
     }
 
@@ -1372,8 +1422,8 @@ void Game::mouseReleaseEvent(QMouseEvent * e, const int cursor_index, const QSiz
     {
         if (e->button() == Qt::LeftButton) {
 
-            r->CallJSFunction("room.onMouseUp", player);
-            r->CallJSFunction("room.onClick", player);
+            r->CallJSFunction("room.onMouseUp", player, multi_players);
+            r->CallJSFunction("room.onClick", player, multi_players);
 
 #ifdef __ANDROID__
 
@@ -1401,8 +1451,8 @@ void Game::mouseReleaseEvent(QMouseEvent * e, const int cursor_index, const QSiz
             }
 #ifdef __ANDROID__
             else if (websurface_focused && focus_websurface) {
-                QPoint cursor_pos(float(focus_websurface->GetI("width"))*focus_websurface_cursor_uv.x(),
-                                  float(focus_websurface->GetI("height"))*focus_websurface_cursor_uv.y());
+                QPoint cursor_pos(float(focus_websurface->GetProperties()->GetWidth())*focus_websurface_cursor_uv.x(),
+                                  float(focus_websurface->GetProperties()->GetHeight())*focus_websurface_cursor_uv.y());
                 QMouseEvent e2(QEvent::MouseButtonRelease, cursor_pos, Qt::LeftButton, Qt::LeftButton, Qt::NoModifier);
                 focus_websurface->mouseReleaseEvent(&e2, i);
 
@@ -1426,16 +1476,13 @@ void Game::mouseReleaseEvent(QMouseEvent * e, const int cursor_index, const QSiz
             //Only allow room edits (object creation or selection), if the room is not globally locked
             mouse_move_accum = QPointF(0,0);
 
-            if (r->GetB("locked")) {
+            if (r->GetProperties()->GetLocked()) {
                 //59.6 - send out error message this is not supported
                 MathUtil::ErrorLog("Warning: cannot do edit, room.locked=true");
             }
-            else if (!r->GetB("locked") && SettingsManager::GetEditModeEnabled())
+            else if (!r->GetProperties()->GetLocked() && SettingsManager::GetEditModeEnabled())
             {
-                if (websurface_selected[cursor_index] && rmb_held_time.elapsed() > 500) {
-                    DragAndDropFromWebsurface(keys[Qt::Key_Control]?"Drag+Drop":"Drag+Pin", cursor_index);
-                }
-                else {
+                if (!(websurface_selected[cursor_index] && rmb_held_time.elapsed() > 500)) {
                     if (player->GetCursorObject(cursor_index) == selected[cursor_index]) {
                         ClearSelection(cursor_index);
                     }
@@ -1452,17 +1499,17 @@ void Game::mouseReleaseEvent(QMouseEvent * e, const int cursor_index, const QSiz
                         }
                         undo_object[cursor_index] = new RoomObject();
                         undo_object[cursor_index]->Copy(o);
-                        undo_object[cursor_index]->SetS("js_id", o->GetS("js_id"));
+                        undo_object[cursor_index]->GetProperties()->SetJSID(o->GetProperties()->GetJSID());
                         state = JVR_STATE_UNIT_TRANSLATE; //or some manipulation state we should have
                     }
                     else {
                         ClearSelection(cursor_index);
 
                         //59.9 - ensure cursor position is at least 2 meters away (if either too close or too far)
-                        QVector3D diff_vec = player->GetCursorPos(cursor_index) - player->GetV("eye_point");
+                        QVector3D diff_vec = player->GetCursorPos(cursor_index) - player->GetProperties()->GetEyePoint();
                         const float len = diff_vec.length();
                         if (len > 100.0f || len <= 1.0f) {
-                            player->SetCursorPos(player->GetV("eye_point") + diff_vec * 2.0f / len, cursor_index);
+                            player->SetCursorPos(player->GetProperties()->GetEyePoint() + diff_vec * 2.0f / len, cursor_index);
                         }
 
                         if (keys[Qt::Key_Shift]) {
@@ -1472,7 +1519,7 @@ void Game::mouseReleaseEvent(QMouseEvent * e, const int cursor_index, const QSiz
                                 r->SetSelected(selected[cursor_index], true);
                                 state = JVR_STATE_EDIT_TEXT;
                                 SoundManager::Play(SOUND_NEWTEXT, false, o->GetPos(), 1.0f);
-                                o->SetB("sync", true);
+                                o->GetProperties()->SetSync(true);
                             }
                         }
                         else if (keys[Qt::Key_Control]) {
@@ -1483,7 +1530,7 @@ void Game::mouseReleaseEvent(QMouseEvent * e, const int cursor_index, const QSiz
                                 r->SelectAssetForObject(selected[cursor_index], 0);
                                 state = JVR_STATE_SELECT_ASSET;
                                 o->PlayCreateObject();
-                                o->SetB("sync", true);
+                                o->GetProperties()->SetSync(true);
                             }
                         }
                         else {
@@ -1494,10 +1541,25 @@ void Game::mouseReleaseEvent(QMouseEvent * e, const int cursor_index, const QSiz
                                 r->SelectAssetForObject(selected[cursor_index], 0);
                                 state = JVR_STATE_SELECT_ASSET;
                                 o->PlayCreateObject();
-                                o->SetB("sync", true);
+                                o->GetProperties()->SetSync(true);
                             }
                         }
                     }
+                }
+            }
+        }
+        else if (e->button() == Qt::MiddleButton) {
+            if (websurface_selected[cursor_index]) {
+                QString url_str = websurface_selected[cursor_index]->GetLinkClicked(cursor_index).toString().trimmed();
+
+                if (!(url_str == websurface_selected[cursor_index]->GetURL() || url_str == "")) {
+                    //remove stuff after ? (59.0 - but not if it's a Google link - contains /url?q=)
+                    if (url_str.contains("?") && !url_str.contains("/url?q=")) {
+                        url_str = url_str.left(url_str.indexOf("?"));
+                    }
+
+                    CreatePortal(url_str, true);
+                    return;
                 }
             }
         }
@@ -1512,9 +1574,9 @@ void Game::mouseReleaseEvent(QMouseEvent * e, const int cursor_index, const QSiz
         break;
 
     case JVR_STATE_DRAGDROP:
-        if (e->button() == Qt::RightButton) {            
+        /*if (e->button() == Qt::RightButton) {
             r->DeleteSelected(selected[cursor_index]);
-        }
+        }*/
         state = JVR_STATE_DEFAULT;
         ClearSelection(cursor_index);
         break;
@@ -1530,10 +1592,10 @@ void Game::mouseReleaseEvent(QMouseEvent * e, const int cursor_index, const QSiz
     case JVR_STATE_UNIT_BLEND_SRC:
     case JVR_STATE_UNIT_BLEND_DEST:
     case JVR_STATE_UNIT_MIRROR:
-        if (!left_btn && undo_object[cursor_index] && undo_object[cursor_index]->GetS("js_id").length() > 0 && o) {
+        if (!left_btn && undo_object[cursor_index] && undo_object[cursor_index]->GetProperties()->GetJSID().length() > 0 && o) {
             o->Copy(undo_object[cursor_index]);
             //update others we are undoing
-            o->SetB("sync", true);
+            o->GetProperties()->SetSync(true);
         }
 
         r->SetSelected(selected[cursor_index], false);
@@ -1599,7 +1661,7 @@ void Game::keyPressEvent(QKeyEvent * e)
         }
         if (websurface_selected[i]) {
             web_sel = websurface_selected[i];
-        }        
+        }
         if (selected[i].length() > 0) {
             sel = selected[i];
         }
@@ -1649,7 +1711,7 @@ void Game::keyPressEvent(QKeyEvent * e)
     case Qt::Key_Delete:
 
         //only allow deletion if not editing text, and room is not locked
-        if (!GetPlayerEnteringText() && sel.length() > 0 && !e->isAutoRepeat() && !r->GetB("locked")) {
+        if (!GetPlayerEnteringText() && sel.length() > 0 && !e->isAutoRepeat() && !r->GetProperties()->GetLocked()) {
             QPointer <RoomObject> o = r->GetRoomObject(sel);
             if (o) {
                 const QString delete_obj_code = o->GetXMLCode();
@@ -1691,40 +1753,44 @@ void Game::keyPressEvent(QKeyEvent * e)
         case JVR_STATE_INTERACT_TELEPORT:
         {
             const bool do_recording = (e->key() == Qt::Key_F9) && !keys[Qt::Key_Control];
-            if (!e->isAutoRepeat() && SoundManager::GetCaptureDeviceEnabled() && do_recording && !player->GetB("recording")) {
-                player->SetB("recording", true);
+            if (!e->isAutoRepeat() && SoundManager::GetCaptureDeviceEnabled() && do_recording && !player->GetRecording()) {
+                player->SetRecording(true);
             }
 
             if ((e->modifiers().testFlag(Qt::ShiftModifier) || e->key() == Qt::Key_Shift)) {
-                player->SetB("running", true);
+                player->SetRunning(true);
             }
 
-            bool defaultPrevented = r->RunKeyPressEvent(e, player);
+            bool defaultPrevented = r->RunKeyPressEvent(e, player, multi_players);
             if (defaultPrevented) {
-                keys[e->key()] = false;                
+                keys[e->key()] = false;
                 break;
             }
 
             switch (e->key()) {
 
+            case Qt::Key_Tab:
+                virtualmenu->MenuButtonPressed();
+                break;
+
             case Qt::Key_W:
             case Qt::Key_Up:
                 if (!GetPlayerEnteringText() && !keys[Qt::Key_Control]) {
-                    player->SetB("walk_forward", true);
+                    player->SetWalkForward(true);
                 }
                 break;
 
             case Qt::Key_A:
             case Qt::Key_Left:
                 if (!GetPlayerEnteringText() && !keys[Qt::Key_Control]) {
-                    player->SetB("walk_left", true);
+                    player->SetWalkLeft(true);
                 }
                 break;
 
             case Qt::Key_S:
             case Qt::Key_Down:
                 if (!GetPlayerEnteringText() && !keys[Qt::Key_Control]) {
-                    player->SetB("walk_back", true);
+                    player->SetWalkBack(true);
                 }
                 else if (e->key() == Qt::Key_S && keys[Qt::Key_Control]) {
                     SaveRoom(r->GetSaveFilename());
@@ -1734,7 +1800,7 @@ void Game::keyPressEvent(QKeyEvent * e)
             case Qt::Key_D:
             case Qt::Key_Right:
                 if (!GetPlayerEnteringText() && !keys[Qt::Key_Control]) {
-                    player->SetB("walk_right", true);
+                    player->SetWalkRight(true);
                 }
                 break;
 
@@ -1752,22 +1818,22 @@ void Game::keyPressEvent(QKeyEvent * e)
 
             case Qt::Key_F:
             {
-                player->SetFlying(!player->GetB("flying"));
-                player->SetB("follow_mode", false);
-                player->SetS("follow_mode_userid", "");
+                player->SetFlying(!player->GetFlying());
+                player->SetFollowMode(false);
+                player->SetFollowModeUserID("");
             }
                 break;
 
             case Qt::Key_C:
                 if (keys[Qt::Key_Control]) {
-                    SoundManager::Play(SOUND_COPYING, false, player->GetV("pos"), 1.0f);
-                    QApplication::clipboard()->setText(r->GetS("url"));
+                    SoundManager::Play(SOUND_COPYING, false, player->GetProperties()->GetPos()->toQVector3D(), 1.0f);
+                    QApplication::clipboard()->setText(r->GetProperties()->GetURL());
                 }
                 break;
 
             case Qt::Key_V:
                 if (keys[Qt::Key_Control]) {
-                    if (r->GetB("locked")) {
+                    if (r->GetProperties()->GetLocked()) {
                         MathUtil::ErrorLog("Warning: cannot do paste, room.locked=true");
                     }
                     else {
@@ -1775,7 +1841,7 @@ void Game::keyPressEvent(QKeyEvent * e)
                         if (o) {
                             QString new_jsid;
 
-                            if (keys[Qt::Key_Shift] ) {                                
+                            if (keys[Qt::Key_Shift] ) {
                                 new_jsid = r->PasteSelected(copy_selected, player->GetCursorPos(0), o->GetXDir(), o->GetYDir(), o->GetZDir(), GetGlobalUUID());
                             }
                             else {
@@ -1783,7 +1849,7 @@ void Game::keyPressEvent(QKeyEvent * e)
                             }
 
                             if (r->GetRoomObject(new_jsid)) {
-                                r->GetRoomObject(new_jsid)->SetB("sync", true);
+                                r->GetRoomObject(new_jsid)->GetProperties()->SetSync(true);
                                 SoundManager::Play(SOUND_PASTING, false, player->GetCursorPos(0), 1.0f);
                             }
                         }
@@ -1806,21 +1872,21 @@ void Game::keyPressEvent(QKeyEvent * e)
     //                            qDebug() << "Generating" << arr.size();
                                 const QString global_uuid = GetGlobalUUID();
                                 QPointer <AssetImage> a = new AssetImage();
-                                a->SetS("id", global_uuid);
+                                a->GetProperties()->SetID(global_uuid);
                                 a->SetSrc("", QString("data:image/gif;base64,")+arr.toBase64());
-                                a->SetB("sync", true);
+                                a->GetProperties()->SetSync(true);
                                 r->AddAssetImage(a);
 
                                 QPointer <RoomObject> new_object = new RoomObject();
-                                new_object->SetType("object");
-                                new_object->SetS("js_id", global_uuid);
-                                new_object->SetS("id", "plane");
-                                new_object->SetS("collision_id", "plane");
-                                new_object->SetS("image_id", global_uuid);
-                                new_object->SetS("cull_face", "none");
-                                new_object->SetB("lighting", false);
-                                new_object->SetB("sync", true);
-                                new_object->SetV("scale", QVector3D(1.0f, ar, 1.0f));
+                                new_object->SetType(TYPE_OBJECT);
+                                new_object->GetProperties()->SetJSID(global_uuid);
+                                new_object->GetProperties()->SetID("plane");
+                                new_object->GetProperties()->SetCollisionID("plane");
+                                new_object->GetProperties()->SetImageID(global_uuid);
+                                new_object->GetProperties()->SetCullFace("none");
+                                new_object->GetProperties()->SetLighting(false);
+                                new_object->GetProperties()->SetSync(true);
+                                new_object->GetProperties()->SetScale(QVector3D(1.0f, ar, 1.0f));
 
                                 ClearSelection(0);
                                 ClearSelection(1);
@@ -1866,7 +1932,7 @@ void Game::keyPressEvent(QKeyEvent * e)
             case Qt::Key_7:
             case Qt::Key_8:
             case Qt::Key_9:
-            {                
+            {
                 int index = 0;
                 switch (e->key()) {
                 case Qt::Key_0:
@@ -1921,13 +1987,13 @@ void Game::keyPressEvent(QKeyEvent * e)
             switch (e->key()) {
             case Qt::Key_A:
             case Qt::Key_Left:
-            {                
+            {
                 dragdrop_xform.rotate(90.0f, 0, -1, 0);
             }
                 break;
             case Qt::Key_D:
             case Qt::Key_Right:
-            {             
+            {
                 dragdrop_xform.rotate(90.0f, 0, 1, 0);
             }
                 break;
@@ -1994,7 +2060,7 @@ void Game::keyPressEvent(QKeyEvent * e)
             break;
 
         case JVR_STATE_UNIT_ROTATE:
-        {            
+        {
             switch (e->key()) {
             case Qt::Key_A:
             case Qt::Key_Left:
@@ -2066,67 +2132,67 @@ void Game::keyPressEvent(QKeyEvent * e)
 
         case JVR_STATE_UNIT_COLOUR:
         {
-            QColor c = obj->GetC("col");
+            QColor c = MathUtil::GetVector4AsColour(obj->GetProperties()->GetColour()->toQVector4D());
 
             switch (e->key()) {
             case Qt::Key_A:
             case Qt::Key_Left:
                 if (c.red() > 0) {
                     c.setRed(c.red()-1);
-                    obj->SetC("col", c);
-                    obj->SetB("sync", true);
+                    obj->GetProperties()->SetColour(MathUtil::GetColourAsVector4(c));
+                    obj->GetProperties()->SetSync(true);
                 }
                 break;
             case Qt::Key_D:
             case Qt::Key_Right:
                 if (c.red() < 255) {
                     c.setRed(c.red()+1);
-                    obj->SetC("col", c);
-                    obj->SetB("sync", true);
+                    obj->GetProperties()->SetColour(MathUtil::GetColourAsVector4(c));
+                    obj->GetProperties()->SetSync(true);
                 }
                 break;
             case Qt::Key_S:
             case Qt::Key_Down:
                 if (c.green() > 0) {
                     c.setGreen(c.green()-1);
-                    obj->SetC("col", c);
-                    obj->SetB("sync", true);
+                    obj->GetProperties()->SetColour(MathUtil::GetColourAsVector4(c));
+                    obj->GetProperties()->SetSync(true);
                 }
                 break;
             case Qt::Key_W:
             case Qt::Key_Up:
                 if (c.green() < 255) {
                     c.setGreen(c.green()+1);
-                    obj->SetC("col", c);
-                    obj->SetB("sync", true);
+                    obj->GetProperties()->SetColour(MathUtil::GetColourAsVector4(c));
+                    obj->GetProperties()->SetSync(true);
                 }
                 break;
             case Qt::Key_Q:
                 if (c.blue() > 0) {
                     c.setBlue(c.blue()-1);
-                    obj->SetC("col", c);
-                    obj->SetB("sync", true);
+                    obj->GetProperties()->SetColour(MathUtil::GetColourAsVector4(c));
+                    obj->GetProperties()->SetSync(true);
                 }
                 break;
             case Qt::Key_E:
                 if (c.blue() < 255) {
                     c.setBlue(c.blue()+1);
-                    obj->SetC("col", c);
-                    obj->SetB("sync", true);
+                    obj->GetProperties()->SetColour(MathUtil::GetColourAsVector4(c));
+                    obj->GetProperties()->SetSync(true);
                 }
                 break;
             case Qt::Key_F:
                 if (c.alphaF() > 0.0f) {
                     c.setAlphaF(qMax(0.0f, float(c.alphaF())-0.01f));
-                    obj->SetC("col", c);
-                    obj->SetB("sync", true);
+                    obj->GetProperties()->SetColour(MathUtil::GetColourAsVector4(c));
+                    obj->GetProperties()->SetSync(true);
                 }
                 break;
             case Qt::Key_R:
                 if (c.alphaF() < 1.0f) {
                     c.setAlphaF(qMin(1.0f, float(c.alphaF())+0.01f));
-                    obj->SetC("col", c);
-                    obj->SetB("sync", true);
+                    obj->GetProperties()->SetColour(MathUtil::GetColourAsVector4(c));
+                    obj->GetProperties()->SetSync(true);
                 }
                 break;
             case Qt::Key_Backtab:
@@ -2153,14 +2219,14 @@ void Game::keyPressEvent(QKeyEvent * e)
             case Qt::Key_Q:
             case Qt::Key_E:
 
-                if (obj->GetS("collision_id").length() > 0) {
-                    obj->SetS("collision_id", "");
+                if (obj->GetProperties()->GetCollisionID().length() > 0) {
+                    obj->GetProperties()->SetCollisionID("");
                 }
                 else {
-                    obj->SetS("collision_id", obj->GetS("id"));
+                    obj->GetProperties()->SetCollisionID(obj->GetProperties()->GetID());
                 }
-                r->SelectCollisionAssetForObject(sel, obj->GetS("collision_id"));
-                obj->SetB("sync", true);
+                r->SelectCollisionAssetForObject(sel, obj->GetProperties()->GetCollisionID());
+                obj->GetProperties()->SetSync(true);
 
                 break;
             case Qt::Key_Backtab:
@@ -2223,8 +2289,8 @@ void Game::keyPressEvent(QKeyEvent * e)
             case Qt::Key_Q:
             case Qt::Key_E:
 
-                obj->SetB("lighting", !obj->GetB("lighting"));
-                obj->SetB("sync", true);
+                obj->GetProperties()->SetLighting(!obj->GetProperties()->GetLighting());
+                obj->GetProperties()->SetSync(true);
 
                 break;
             case Qt::Key_Backtab:
@@ -2251,20 +2317,20 @@ void Game::keyPressEvent(QKeyEvent * e)
             case Qt::Key_Down:
             case Qt::Key_Q:
             case Qt::Key_E:
-                if (obj->GetS("cull_face") == "back")
+                if (obj->GetProperties()->GetCullFace() == "back")
                 {
-                    obj->SetS("cull_face", "front");
+                    obj->GetProperties()->SetCullFace("front");
                 }
-                else if (obj->GetS("cull_face") == "front")
+                else if (obj->GetProperties()->GetCullFace() == "front")
                 {
-                    obj->SetS("cull_face", "none");
+                    obj->GetProperties()->SetCullFace("none");
                 }
                 else
                 {
-                    obj->SetS("cull_face", "back");
-                }                
+                    obj->GetProperties()->SetCullFace("back");
+                }
 
-                obj->SetB("sync", true);
+                obj->GetProperties()->SetSync(true);
 
                 break;
             case Qt::Key_Backtab:
@@ -2289,7 +2355,7 @@ void Game::keyPressEvent(QKeyEvent * e)
             case Qt::Key_Right:
             case Qt::Key_S:
             case Qt::Key_Down:
-                obj->SetB("mirror", !obj->GetB("mirror"));
+                obj->GetProperties()->SetMirror(!obj->GetProperties()->GetMirror());
                 break;
             case Qt::Key_Backtab:
                 state = JVR_STATE_UNIT_CULL_FACE;
@@ -2310,8 +2376,8 @@ void Game::keyPressEvent(QKeyEvent * e)
             case Qt::Key_Q:
                 r->SelectAssetForObject(sel, -1);
                 if (obj) {
-                    SoundManager::Play(SOUND_CLICK1, false, obj->GetV("pos"), 1.0f);
-                    obj->SetB("sync", true);
+                    SoundManager::Play(SOUND_CLICK1, false, obj->GetProperties()->GetPos()->toQVector3D(), 1.0f);
+                    obj->GetProperties()->SetSync(true);
                 }
                 break;
 
@@ -2322,8 +2388,8 @@ void Game::keyPressEvent(QKeyEvent * e)
             case Qt::Key_E:
                 r->SelectAssetForObject(sel, 1);
                 if (obj) {
-                    SoundManager::Play(SOUND_CLICK2, false, obj->GetV("pos"), 1.0f);
-                    obj->SetB("sync", true);
+                    SoundManager::Play(SOUND_CLICK2, false, obj->GetProperties()->GetPos()->toQVector3D(), 1.0f);
+                    obj->GetProperties()->SetSync(true);
                 }
                 break;
             default:
@@ -2367,7 +2433,7 @@ void Game::keyPressEvent(QKeyEvent * e)
                     selected[0].clear();
                     selected[1].clear();
                     state = JVR_STATE_DEFAULT;
-                    SoundManager::Play(SOUND_COPYING, false, player->GetV("pos"), 1.0f);
+                    SoundManager::Play(SOUND_COPYING, false, player->GetProperties()->GetPos()->toQVector3D(), 1.0f);
                 }
                 break;
             }
@@ -2395,7 +2461,7 @@ void Game::keyPressEvent(QKeyEvent * e)
             default:
                 r->EditText(sel, e->text(), (e->key() == Qt::Key_Backspace));
                 if (obj) {
-                    obj->SetB("sync", true);
+                    obj->GetProperties()->SetSync(true);
                 }
                 break;
             }
@@ -2437,7 +2503,7 @@ void Game::keyReleaseEvent(QKeyEvent * e)
     QPointer <Room> r = env->GetCurRoom();
 
     QPointer <AssetVideo> vid_sel;
-    QPointer <AbstractWebSurface> web_sel;    
+    QPointer <AbstractWebSurface> web_sel;
     QString sel;
 
     for (int i=0; i<2; ++i) {
@@ -2446,7 +2512,7 @@ void Game::keyReleaseEvent(QKeyEvent * e)
         }
         if (websurface_selected[i]) {
             web_sel = websurface_selected[i];
-        }       
+        }
         if (selected[i].length() > 0) {
             sel = selected[i];
         }
@@ -2460,21 +2526,21 @@ void Game::keyReleaseEvent(QKeyEvent * e)
     case Qt::Key_W:
     case Qt::Key_Up:
         if (!GetPlayerEnteringText() && !keys[Qt::Key_Control]) {
-            player->SetB("walk_forward", false);
+            player->SetWalkForward(false);
         }
         break;
 
     case Qt::Key_A:
     case Qt::Key_Left:
         if (!GetPlayerEnteringText() && !keys[Qt::Key_Control]) {
-            player->SetB("walk_left", false);
+            player->SetWalkLeft(false);
         }
         break;
 
     case Qt::Key_S:
     case Qt::Key_Down:
         if (!GetPlayerEnteringText() && !keys[Qt::Key_Control]) {
-            player->SetB("walk_back", false);
+            player->SetWalkBack(false);
         }
         else if (e->key() == Qt::Key_S && keys[Qt::Key_Control]) {
             SaveRoom(r->GetSaveFilename());
@@ -2484,26 +2550,26 @@ void Game::keyReleaseEvent(QKeyEvent * e)
     case Qt::Key_D:
     case Qt::Key_Right:
         if (!GetPlayerEnteringText() && !keys[Qt::Key_Control]) {
-            player->SetB("walk_right", false);
+            player->SetWalkRight(false);
         }
         break;
 
     case Qt::Key_Shift:
         if (!GetPlayerEnteringText()) {
-            player->SetB("running", false);
+            player->SetRunning(false);
         }
         break;
 
     default:
         break;
     }
-	MathUtil::m_capture_frame = e->key() == Qt::Key_Minus;	
+    MathUtil::m_capture_frame = e->key() == Qt::Key_Minus;
 
     //logic for stop speech
     //if capturedeviceenabled, and !micalwayson, and speaking, set speaking false
     const bool do_recording = (e->key() == Qt::Key_F9) && !keys[Qt::Key_Control];
-    if (!e->isAutoRepeat() && SoundManager::GetCaptureDeviceEnabled() && do_recording && player->GetB("recording")) {
-        player->SetB("recording", false);
+    if (!e->isAutoRepeat() && SoundManager::GetCaptureDeviceEnabled() && do_recording && player->GetRecording()) {
+        player->SetRecording(false);
 
     }
 
@@ -2514,7 +2580,7 @@ void Game::keyReleaseEvent(QKeyEvent * e)
         return;
     }
 
-    bool defaultPrevented = r->RunKeyReleaseEvent(e, player);
+    bool defaultPrevented = r->RunKeyReleaseEvent(e, player, multi_players);
     if (defaultPrevented) {
         return;
     }
@@ -2523,46 +2589,46 @@ void Game::keyReleaseEvent(QKeyEvent * e)
 }
 
 void Game::ResetPlayer()
-{    
+{
     QPointer <Room> r = env->GetCurRoom();
     if (r) {
         QPointer <RoomObject> o = r->GetEntranceObject();
         if (o) {
-            player->SetV("pos", o->GetPos() + o->GetZDir()*0.5f);
-            player->SetV("dir", o->GetZDir());
+            player->GetProperties()->SetPos(o->GetPos() + o->GetZDir()*0.5f);
+            player->GetProperties()->SetDir(o->GetZDir());
             player->UpdateDir();
         }
 
         r->SetPlayerInRoom(player);
     }
     else {
-        player->SetV("pos", QVector3D(0,0,0));
-        player->SetV("dir", QVector3D(0,0,-1));
+        player->GetProperties()->SetPos(QVector3D(0,0,0));
+        player->GetProperties()->SetDir(QVector3D(0,0,-1));
         player->UpdateDir();
     }
 
-    player->SetV("vel", QVector3D(0,0,0));
-    player->SetB("hmd_calibrated", false);
+    player->GetProperties()->SetVel(QVector3D(0,0,0));
+    player->SetHMDCalibrated(false);
 }
 
 void Game::TeleportPlayer()
-{        
+{
 //    qDebug() << "Game::TeleportPlayer()" << teleport_portal << teleport_portal->GetActive() << teleport_portal->GetRoom() << teleport_portal->GetRoom()->GetProcessed();
     ClearSelection(0);
     ClearSelection(1);
-    SetPrivateWebsurfacesVisible(false);        
+    SetPrivateWebsurfacesVisible(false);
 
     QPointer <Room> r = env->GetCurRoom()->GetConnectedRoom(teleport_portal);
-    if (teleport_portal && teleport_portal->GetB("active") && r) {
+    if (teleport_portal && teleport_portal->GetProperties()->GetActive() && r) {
 #ifdef __ANDROID__
         if (JNIUtil::GetShowingVR()){
             env->MovePlayer(teleport_portal, player, true);
         }
         else{
-            player->SetV("pos", teleport_portal->GetPos()+teleport_portal->GetDir());
+            player->GetProperties()->SetPos(teleport_portal->GetPos()+teleport_portal->GetDir());
             QMatrix4x4 m;
             m.rotate(180, QVector3D(0,1,0));
-            player->SetV("dir", m*(teleport_portal->GetDir() * 1.5f));
+            player->GetProperties()->SetDir(m*(teleport_portal->GetDir() * 1.5f));
             player->UpdateDir();
         }
 #else
@@ -2571,31 +2637,26 @@ void Game::TeleportPlayer()
     }
     else {
 //        qDebug() << "Game::TeleportPlayer()" << player->GetV("pos") << teleport_p;
-        player->SetV("pos", teleport_p); //59.0 - do not change player orientation, fixes 180 rotation bug using vive
+        player->GetProperties()->SetPos(teleport_p); //59.0 - do not change player orientation, fixes 180 rotation bug using vive
     }
-    player->SetV("vel", QVector3D(0,0,0));
-    player->SetB("follow_mode", false);
-    player->SetS("follow_mode_userid", "");
+    player->GetProperties()->SetVel(QVector3D(0,0,0));
+    player->SetFollowMode(false);
+    player->SetFollowModeUserID("");
 
     //Note: at this point in the code, player's curroom may have changed
-    env->GetCurRoom()->SetPlayerInRoom(player);
-
-    if (virtualkeyboard->GetVisible()) {
-        virtualkeyboard->SetVisible(false);
-        virtualkeyboard->SetWebSurface(NULL);
-    }        
+    env->GetCurRoom()->SetPlayerInRoom(player);   
 }
 
 float Game::GetCurrentNearDist()
 {
     QPointer <Room> r = env->GetCurRoom();
-    return (r ? r->GetF("near_dist") : 0.1f);
+    return (r ? r->GetProperties()->GetNearDist() : 0.1f);
 }
 
 float Game::GetCurrentFarDist()
 {
     QPointer <Room> r = env->GetCurRoom();
-    return (r ? r->GetF("far_dist") : 1000.0f);
+    return (r ? r->GetProperties()->GetFarDist() : 1000.0f);
 }
 
 MenuOperations & Game::GetMenuOperations()
@@ -2639,8 +2700,10 @@ void Game::SaveRoom(const QString out_filename)
     //or it ends in .htm or .html (and can thus be overwritten)
     QFileInfo check_file(out_filename);
     if (check_file.exists()) {
-        if (out_filename.right(3).toLower() != "htm" && out_filename.right(4).toLower() != "html") {
-            qDebug() << "Game::SaveFireBoxRoom() - error: cannot overwrite non-html files on local filesystem";
+        if (out_filename.right(3).toLower() != "htm"
+                && out_filename.right(4).toLower() != "html"
+                && out_filename.right(4).toLower() != "json") {
+            qDebug() << "Game::SaveFireBoxRoom() - error: cannot overwrite non-html/json files on local filesystem";
             return;
         }
 
@@ -2650,20 +2713,20 @@ void Game::SaveRoom(const QString out_filename)
 
     QPointer <Room> r = env->GetCurRoom();
 
-    const bool success0 = r->SaveXML(out_filename);
-    const bool success1 = r->SaveJSON(out_filename + ".json");
-    if (success0 && success1) {
-        SoundManager::Play(SOUND_SAVED, false, player->GetV("pos"), 1.0f);
+    bool success;
+    if (out_filename.right(4).toLower() == "json") {
+        success = r->SaveJSON(out_filename);
+    }
+    else {
+        success = r->SaveXML(out_filename);
     }
 
-    //save to clipboard
-    QString room_code;
-    QTextStream ofs(&room_code);
-    r->SaveXML(ofs);
-    QApplication::clipboard()->setText(room_code);
+    if (success) {
+        SoundManager::Play(SOUND_SAVED, false, player->GetProperties()->GetPos()->toQVector3D(), 1.0f);
+    }
 
     //add URL to saved file to workspaces list
-    bookmarks->AddWorkspace(QUrl(out_filename).toString(), r->GetS("title"));
+    bookmarks->AddWorkspace(QUrl(out_filename).toString(), r->GetProperties()->GetTitle());
 }
 
 void Game::UpdateCursorAndTeleportTransforms()
@@ -2699,13 +2762,13 @@ void Game::UpdateCursorAndTeleportTransforms()
     }
 
     if (cursor_active >= 0) {
-        const QVector3D pos = player->GetV("pos");
+        const QVector3D pos = player->GetProperties()->GetPos()->toQVector3D();
         const QVector3D p = player->GetCursorPos(cursor_active);
         const QVector3D z = player->GetCursorZDir(cursor_active);
-        const QVector3D e = player->GetV("eye_point");
-        const QVector3D v = player->GetV("view_dir");
+        const QVector3D e = player->GetProperties()->GetEyePoint();
+        const QVector3D v = player->GetProperties()->GetViewDir()->toQVector3D();
         const float z_dot_y = QVector3D::dotProduct(z, QVector3D(0, 1, 0));
-        const float max_dist = r->GetF("teleport_max_dist");
+        const float max_dist = r->GetProperties()->GetTeleportMaxDist();
 
         teleport_z = QVector3D(0, 1, 0);
         if (fabsf(z_dot_y) < 0.1f) {
@@ -2743,7 +2806,7 @@ void Game::UpdateCursorAndTeleportTransforms()
 
 void Game::DrawCursorGL()
 {
-    QPointer <Room> r = env->GetCurRoom();    
+    QPointer <Room> r = env->GetCurRoom();
     QPointer <RoomObject> cursor_obj = r->GetRoomObject(player->GetCursorObject(cursor_active));
     QPointer <AssetShader> shader = Room::GetTransparencyShader();
 
@@ -2759,7 +2822,7 @@ void Game::DrawCursorGL()
         RendererInterface::m_pimpl->SetDepthMask(DepthMask::DEPTH_WRITES_DISABLED);
 
         if (cursor_active >= 0) {
-            const float dist = (player->GetV("eye_point") - player->GetCursorPos(cursor_active)).length();
+            const float dist = (player->GetProperties()->GetEyePoint() - player->GetCursorPos(cursor_active)).length();
             QVector3D p = player->GetCursorPos(cursor_active); // - player->GetV("view_dir") * dist * 0.1f;
             const float s = dist * 0.1f;
             const float alpha = qMax(qMin(dist-1.0f, 1.0f), 0.0f);
@@ -2777,13 +2840,14 @@ void Game::DrawCursorGL()
 #ifdef __ANDROID__
             ControllerState * cs = controller_manager->GetStates();
             if ((draw_cursor ||
-                 JNIUtil::GetGamepadConnected() ||
+                 (JNIUtil::GetGamepadConnected() && cursor_active == 0) ||
                  (controller_manager->GetUsingSpatiallyTrackedControllers() &&
                   (cursor_active == 0 || (cursor_active == 1 && (!cs[0].active || cs[1].GetClick().hover || cs[1].GetTeleport().hover || cs[1].GetGrab().pressed)))))
-                    && r->GetB("cursor_visible")) {
+                    && r->GetProperties()->GetCursorVisible()) {
 #else
-            if ((draw_cursor || (controller_manager->GetUsingSpatiallyTrackedControllers() && controller_manager->GetStates()[cursor_active].GetClick().hover))
-                    && r->GetB("cursor_visible")) {
+            if (virtualmenu->GetVisible() ||
+                    ((draw_cursor || (controller_manager->GetUsingSpatiallyTrackedControllers() && controller_manager->GetStates()[cursor_active].GetClick().hover))
+                    && r->GetProperties()->GetCursorVisible())) {
 #endif
                 MathUtil::PushModelMatrix();
                 MathUtil::LoadModelIdentity();
@@ -2792,7 +2856,8 @@ void Game::DrawCursorGL()
 
                 //56.0 - hacky bugfix - if we do not draw something in the "cursor" scope, the 2DUI websurface does not update properly
     //            qDebug() << p << x << y << z << s << alpha;
-                if (websurface_selected[cursor_active] ||
+                if (virtualmenu->GetVisible() ||
+                        websurface_selected[cursor_active] ||
                         (video_selected[cursor_active] && cursor_obj && !video_selected[cursor_active]->GetPlaying(cursor_obj->GetMediaContext()))) {
                     if (RoomObject::cursor_arrow_obj) {
                         RoomObject::cursor_arrow_obj->DrawGL(shader, QColor(255,255,255,255));
@@ -2804,7 +2869,7 @@ void Game::DrawCursorGL()
                     }
                 }
                 else if (cursor_obj &&
-                         ((cursor_obj->GetType() == "link" && cursor_obj->GetB("active")) || cursor_obj->GetType() == "ghost")) {
+                         ((cursor_obj->GetType() == TYPE_LINK && cursor_obj->GetProperties()->GetActive()) || cursor_obj->GetType() == TYPE_GHOST)) {
                     if (RoomObject::cursor_hand_obj) {
                         RoomObject::cursor_hand_obj->DrawGL(shader, QColor(255,255,255,int(255.0f*alpha)));
                     }
@@ -2843,22 +2908,22 @@ void Game::DrawCursorGL()
                         player_avatar->GetAssetGhost()->SetFromFrames(frames, 1000);
                     }
 
-                    const QColor c = player_avatar->GetC("col");
+                    const QColor c = MathUtil::GetVector4AsColour(player_avatar->GetProperties()->GetColour()->toQVector4D());
                     const QVector3D p = player_avatar->GetPos();
                     QColor c2 = c;
                     c2.setAlpha(128);
 
                     const QString s = player_avatar->GetHMDType();
                     player_avatar->SetHMDType("");
-                    player_avatar->SetV("pos", QVector3D(0,0,0));
+                    player_avatar->GetProperties()->SetPos(QVector3D(0,0,0));
 
-                    player_avatar->SetC("col", c2);
-                    player_avatar->Update(player->GetF("delta_time"));
-                    player_avatar->DrawGL(shader, true, player->GetV("pos"));
-                    player_avatar->SetC("col", c);
+                    player_avatar->GetProperties()->SetColour(MathUtil::GetColourAsVector4(c2));
+                    player_avatar->Update(player->GetDeltaTime());
+                    player_avatar->DrawGL(shader, true, player->GetProperties()->GetPos()->toQVector3D());
+                    player_avatar->GetProperties()->SetColour(MathUtil::GetColourAsVector4(c));
                     player_avatar->SetHMDType(s);
 
-                    player_avatar->SetV("pos", p);
+                    player_avatar->GetProperties()->SetPos(p);
                 }
 
                 MathUtil::PopModelMatrix();
@@ -2876,9 +2941,9 @@ void Game::UpdateFollowMode()
 {
     QPointer <Room> r = env->GetCurRoom();
 
-    if (player->GetB("follow_mode")) {
+    if (player->GetFollowMode()) {
 
-        const QString follow_userid = player->GetS("follow_mode_userid");
+        const QString follow_userid = player->GetFollowModeUserID();
         QString follow_url;
 
         //1.  find followed players' current URL
@@ -2897,7 +2962,7 @@ void Game::UpdateFollowMode()
         }
 
         //2. create room to followed user if we are not there, and move there
-        if (r->GetS("url") != follow_url) {
+        if (r->GetProperties()->GetURL() != follow_url) {
             QPointer <RoomObject> p = CreatePortal(follow_url, false);
             env->MovePlayer(p, player, false); //move player to new room, updates history
         }
@@ -2905,28 +2970,28 @@ void Game::UpdateFollowMode()
         //3.  if we are in the followed player's room with them, move us to their position
         QList <QPointer <RoomObject> > users = multi_players->GetPlayersInRoom(follow_url);
         for (int i=0; i<users.size(); ++i) {
-            if (users[i] && users[i]->GetS("id") == follow_userid) {
-                player->SetV("pos", users[i]->GetPos());
-                player->SetV("vel", QVector3D(0,0,0));
+            if (users[i] && users[i]->GetProperties()->GetID() == follow_userid) {
+                player->GetProperties()->SetPos(users[i]->GetPos());
+                player->GetProperties()->SetVel(QVector3D(0,0,0));
                 break;
             }
         }
 
         //4. allow breaking out of follow mode by walking
         if (player->GetWalking()) {
-            player->SetB("follow_mode", false);
-            player->SetS("follow_mode_userid", "");
+            player->SetFollowMode(false);
+            player->SetFollowModeUserID("");
         }
     }
 }
 
 void Game::UpdateOverlays()
-{    
+{
     QPointer <Room> r = env->GetCurRoom();
 #ifndef __ANDROID__
     PerformanceLogger & perf_logger = r->GetPerformanceLogger();
 #endif
-    const QVector3D player_pos = player->GetV("pos");
+    const QVector3D player_pos = player->GetProperties()->GetPos()->toQVector3D();
 
     if (state == JVR_STATE_UNIT_TRANSLATE ||
             state == JVR_STATE_UNIT_ROTATE ||
@@ -2945,14 +3010,13 @@ void Game::UpdateOverlays()
         if (obj) {
             info_text_geom.Clear();
 
-
-            const QString t = obj->GetS("_type");
-            QString type_str = t + " js_id=\"" + obj->GetS("js_id");
-            if (t == "link") {
-                type_str += " url=\"" + obj->GetS("url").left(15)+ "...";
+            const ElementType t = obj->GetType();
+            QString type_str = DOMNode::ElementTypeToTagName(t) + " js_id=\"" + obj->GetProperties()->GetJSID();
+            if (t == TYPE_LINK) {
+                type_str += " url=\"" + obj->GetProperties()->GetURL().left(15)+ "...";
             }
-            else if (t != "text" && t != "paragraph"){
-                type_str += " id=\"" + obj->GetS("id") + "\"";
+            else if (t != TYPE_TEXT && t != TYPE_PARAGRAPH){
+                type_str += " id=\"" + obj->GetProperties()->GetID() + "\"";
             }
 
             if (state == JVR_STATE_SELECT_ASSET) {
@@ -2963,36 +3027,36 @@ void Game::UpdateOverlays()
             }
 
             if (state == JVR_STATE_UNIT_TRANSLATE) {
-                info_text_geom.AddText(QString(" pos=") + MathUtil::GetVectorAsString(obj->GetV("pos")), QColor(0,255,0));
+                info_text_geom.AddText(QString(" pos=") + MathUtil::GetVectorAsString(obj->GetProperties()->GetPos()->toQVector3D()), QColor(0,255,0));
             }
             else if (state == JVR_STATE_UNIT_ROTATE) {
-                info_text_geom.AddText(QString(" xdir=") + MathUtil::GetVectorAsString(obj->GetV("xdir")), QColor(0,255,0));
-                info_text_geom.AddText(QString(" ydir=") + MathUtil::GetVectorAsString(obj->GetV("ydir")), QColor(0,255,0));
-                info_text_geom.AddText(QString(" zdir=") + MathUtil::GetVectorAsString(obj->GetV("zdir")), QColor(0,255,0));
+                info_text_geom.AddText(QString(" xdir=") + MathUtil::GetVectorAsString(obj->GetProperties()->GetXDir()->toQVector3D()), QColor(0,255,0));
+                info_text_geom.AddText(QString(" ydir=") + MathUtil::GetVectorAsString(obj->GetProperties()->GetYDir()->toQVector3D()), QColor(0,255,0));
+                info_text_geom.AddText(QString(" zdir=") + MathUtil::GetVectorAsString(obj->GetProperties()->GetZDir()->toQVector3D()), QColor(0,255,0));
             }
             else if (state == JVR_STATE_UNIT_SCALE) {
-                info_text_geom.AddText(QString(" scale=") + MathUtil::GetVectorAsString(obj->GetV("scale")), QColor(0,255,0));
+                info_text_geom.AddText(QString(" scale=") + MathUtil::GetVectorAsString(obj->GetProperties()->GetScale()->toQVector3D()), QColor(0,255,0));
             }
             else if (state == JVR_STATE_UNIT_COLOUR) {
-                info_text_geom.AddText(QString(" col=") + MathUtil::GetColourAsString(obj->GetC("col")), QColor(0,255,0));
+                info_text_geom.AddText(QString(" col=") + MathUtil::GetVector4AsString(obj->GetProperties()->GetColour()->toQVector4D()), QColor(0,255,0));
             }
             else if (state == JVR_STATE_UNIT_COLLISIONID) {
-                info_text_geom.AddText(QString(" collision_id=\"") + obj->GetS("collision_id") + "\"", QColor(0,255,0));
+                info_text_geom.AddText(QString(" collision_id=\"") + obj->GetProperties()->GetCollisionID() + "\"", QColor(0,255,0));
             }
             else if (state == JVR_STATE_UNIT_COLLISIONSCALE) {
-                info_text_geom.AddText(QString(" collision_scale=\"") + obj->GetS("collision_scale") + "\"", QColor(0,255,0));
+                info_text_geom.AddText(QString(" collision_scale=\"") + MathUtil::GetVectorAsString(obj->GetProperties()->GetCollisionScale()->toQVector3D()) + "\"", QColor(0,255,0));
             }
             else if (state == JVR_STATE_UNIT_LIGHTING) {
-                info_text_geom.AddText(QString(" lighting=\"") + obj->GetS("lighting") + "\"", QColor(0,255,0));
+                info_text_geom.AddText(QString(" lighting=") + MathUtil::GetBoolAsString(obj->GetProperties()->GetLighting()), QColor(0,255,0));
             }
             else if (state == JVR_STATE_UNIT_CULL_FACE) {
-                info_text_geom.AddText(QString(" cull_face=\"") + obj->GetS("cull_face") + "\"", QColor(0,255,0));
+                info_text_geom.AddText(QString(" cull_face=\"") + obj->GetProperties()->GetCullFace() + "\"", QColor(0,255,0));
             }
             else if (state == JVR_STATE_UNIT_MIRROR) {
-                info_text_geom.AddText(QString(" mirror=\"") + obj->GetS("mirror") + "\"", QColor(0,255,0));
+                info_text_geom.AddText(QString(" mirror=") + MathUtil::GetBoolAsString(obj->GetProperties()->GetMirror()), QColor(0,255,0));
             }
 
-            if (obj->GetType() == "text") {
+            if (t == TYPE_TEXT) {
                 info_text_geom.AddText("  ...</text>");
             }
             else {
@@ -3026,8 +3090,8 @@ void Game::UpdateOverlays()
         }
         player->SetCursorZDir(cursor_zdir, 0);
 
-        const QVector3D ydir = player->GetV("up_dir");
-        const QVector3D zdir = player->GetV("view_dir");
+        const QVector3D ydir = player->GetProperties()->GetUpDir()->toQVector3D();
+        const QVector3D zdir = player->GetProperties()->GetViewDir()->toQVector3D();
         const QVector3D xdir = QVector3D::crossProduct(zdir, ydir).normalized();
 
         const QString pos_text = QString("pos:") + MathUtil::GetVectorAsString(player_pos, false);
@@ -3049,10 +3113,10 @@ void Game::UpdateOverlays()
         QString tex_text = QString("Textures: ") + QString::number(RendererInterface::m_pimpl->GetNumTextures());
         QString userid_text = QString("UserID: ") + multi_players->GetUserID();
 
-        if (player->GetB("speaking")) {
+        if (player->GetSpeaking()) {
             userid_text += " (Speaking)";
         }
-        if (player->GetB("recording")) {
+        if (player->GetRecording()) {
             userid_text += " (Recording)";
         }
 
@@ -3089,7 +3153,7 @@ void Game::UpdateOverlays()
         info2_text_geom.AddText(tricount_text);
         info2_text_geom.AddText(tex_text);
 
-        if (player->GetB("speaking") || player->GetB("recording")) {
+        if (player->GetSpeaking() || player->GetRecording()) {
             info2_text_geom.AddText(userid_text, QColor(0,255,0));
         }
         else {
@@ -3098,7 +3162,7 @@ void Game::UpdateOverlays()
 
         info2_text_geom.AddText("");
 
-        const QString cur_url = r->GetS("url");
+        const QString cur_url = r->GetProperties()->GetURL();
         QList <ServerConnection> & conn_list = multi_players->GetConnectionList();
 
         info2_text_geom.AddText("Server connections: " + QString::number(conn_list.size()));
@@ -3131,15 +3195,6 @@ void Game::UpdateOverlays()
             }
         }
     }
-
-    //Update colour/scale of "speaking" text
-    if (player->GetB("speaking")) {
-        const float s = SoundManager::GetMicLevel();
-        const int v = qMax(0, qMin(255, int(512.0f * s)));
-        const QColor c(255 - v, 255, 255 - v);
-        speaking_text_geom.Clear();
-        speaking_text_geom.AddText("(Speaking)", c);
-    }
 }
 
 void Game::DrawOverlaysGL()
@@ -3164,19 +3219,19 @@ void Game::DrawOverlaysGL()
     shader->SetUseTexture(0, true);
     shader->SetUseLighting(false);
     shader->SetConstColour(QVector4D(1,1,1,1));
-    shader->SetChromaKeyColour(QVector4D(0,0,0,0));    
+    shader->SetChromaKeyColour(QVector4D(0,0,0,0));
     shader->SetUseSkelAnim(false);
     shader->SetUseClipPlane(false);
 
-    const QVector3D ydir = player->GetV("up_dir");
-    const QVector3D zdir = player->GetV("view_dir");
+    const QVector3D ydir = player->GetProperties()->GetUpDir()->toQVector3D();
+    const QVector3D zdir = player->GetProperties()->GetViewDir()->toQVector3D();
     const QVector3D xdir = QVector3D::crossProduct(zdir, ydir).normalized();
 
     QMatrix4x4 m;
     m.setColumn(0, xdir);
     m.setColumn(1, ydir);
     m.setColumn(2, zdir);
-    m.setColumn(3, player->GetV("eye_point"));
+    m.setColumn(3, player->GetProperties()->GetEyePoint());
     m.setRow(3, QVector4D(0,0,0,1));
 #ifndef __ANDROID__
     m.translate(-0.5f,0.25f,1);
@@ -3292,24 +3347,27 @@ void Game::DrawOverlaysGL()
         MathUtil::PopModelMatrix();
     }
 #endif
-    else if (player->GetB("speaking")) {
+    else if (player->GetSpeaking()) {
         const float s = SoundManager::GetMicLevel();
 
         MathUtil::PushModelMatrix();
         MathUtil::MultModelMatrix(m);
-        MathUtil::MultModelMatrix(speaking_text_geom.GetModelMatrix());
-        MathUtil::ModelMatrix().scale(1.0f + s * 0.5f);
+        MathUtil::ModelMatrix().scale(0.1f*(1.0f + s * 0.5f));
+        shader->SetUseTexture(0, false);
         shader->UpdateObjectUniforms();
-        speaking_text_geom.DrawGL(shader);
+        SpinAnimation::DrawPlaneGL(shader, QColor(128,0,0));
+        shader->SetUseTexture(0, true);
         MathUtil::PopModelMatrix();
     }
-    else if (player->GetB("recording")) {
+    else if (player->GetRecording()) {
         m.scale(0.25f);
-		MathUtil::PushModelMatrix();
+        MathUtil::PushModelMatrix();
         MathUtil::MultModelMatrix(m);
-		MathUtil::MultModelMatrix(recording_text_geom.GetModelMatrix());
+        MathUtil::ModelMatrix().scale(0.1f*(1.0f));
+        shader->SetUseTexture(0, false);
         shader->UpdateObjectUniforms();
-		recording_text_geom.DrawGL(shader);
+        SpinAnimation::DrawPlaneGL(shader, QColor(192,0,0));
+        shader->SetUseTexture(0, true);
         MathUtil::PopModelMatrix();
     }
 
@@ -3330,7 +3388,7 @@ QString Game::GetVersion() const
 void Game::StartResetPlayer()
 {
     if (fadestate == FADE_NONE) {
-        SoundManager::Play(SOUND_BACK, false, player->GetV("pos"), 1.0f);
+        SoundManager::Play(SOUND_BACK, false, player->GetProperties()->GetPos()->toQVector3D(), 1.0f);
         fadestate = FADE_RESETPLAYER1;
         fade_time.start();
     }
@@ -3382,6 +3440,11 @@ QPointer <Environment> Game::GetEnvironment()
     return env;
 }
 
+QPointer <VirtualMenu> Game::GetVirtualMenu()
+{
+    return virtualmenu;
+}
+
 QPointer <MultiPlayerManager> Game::GetMultiPlayerManager()
 {
     return multi_players;
@@ -3390,7 +3453,7 @@ QPointer <MultiPlayerManager> Game::GetMultiPlayerManager()
 void Game::EditModeTranslate(QPointer <RoomObject> obj, const int x, const int y, const int z)
 {
     QPointer <Room> r = env->GetCurRoom();
-    if (r->GetB("locked")) {
+    if (r->GetProperties()->GetLocked()) {
         MathUtil::ErrorLog("Warning: cannot do translate, room.locked=true");
         return;
     }
@@ -3400,7 +3463,7 @@ void Game::EditModeTranslate(QPointer <RoomObject> obj, const int x, const int y
     }
 
     const float translate_amount = unit_translate_amount[unit_scale];
-    const float theta = player->GetF("theta");
+    const float theta = player->GetTheta();
 
     QVector3D player_xdir;
     const QVector3D player_ydir(0,1,0);
@@ -3426,26 +3489,26 @@ void Game::EditModeTranslate(QPointer <RoomObject> obj, const int x, const int y
         player_zdir = QVector3D(0, 0, -1);
     }
 
-    const QVector3D last_pos = obj->GetV("pos");
+    const QVector3D last_pos = obj->GetProperties()->GetPos()->toQVector3D();
 
     const float snap_x = float(int(roundf(last_pos.x() / translate_amount))) * translate_amount;
     const float snap_y = float(int(roundf(last_pos.y() / translate_amount))) * translate_amount;
     const float snap_z = float(int(roundf(last_pos.z() / translate_amount))) * translate_amount;
 
-    obj->SetInterpolate(true);
+    obj->GetProperties()->SetInterpolate(true);
     obj->SetInterpolation();
 
-    obj->SetV("pos", QVector3D(snap_x, snap_y, snap_z)
+    obj->GetProperties()->SetPos(QVector3D(snap_x, snap_y, snap_z)
                 + player_xdir * x * translate_amount
                 + player_ydir * y * translate_amount
                 + player_zdir * z * translate_amount);
-    obj->SetB("sync", true);
+    obj->GetProperties()->SetSync(true);
 }
 
 void Game::EditModeRotate(QPointer<RoomObject> obj, const int x, const int y, const int z)
-{        
+{
     QPointer <Room> r = env->GetCurRoom();
-    if (r->GetB("locked")) {
+    if (r->GetProperties()->GetLocked()) {
         MathUtil::ErrorLog("Warning: cannot do rotate, room.locked=true");
         return;
     }
@@ -3455,7 +3518,7 @@ void Game::EditModeRotate(QPointer<RoomObject> obj, const int x, const int y, co
     }
 
     const float rot_deg = unit_rotate_amount[unit_scale];
-    const float theta = player->GetF("theta");
+    const float theta = player->GetTheta();
 
     QVector3D player_xdir;
     const QVector3D player_ydir(0,1,0);
@@ -3481,9 +3544,9 @@ void Game::EditModeRotate(QPointer<RoomObject> obj, const int x, const int y, co
         player_zdir = QVector3D(0, 0, 1);
     }
 
-    QVector3D xdir = obj->GetV("xdir");
-    QVector3D ydir = obj->GetV("ydir");
-    QVector3D zdir = obj->GetV("zdir");
+    QVector3D xdir = obj->GetProperties()->GetXDir()->toQVector3D();
+    QVector3D ydir = obj->GetProperties()->GetYDir()->toQVector3D();
+    QVector3D zdir = obj->GetProperties()->GetZDir()->toQVector3D();
 
     xdir.normalize();
     ydir.normalize();
@@ -3511,20 +3574,21 @@ void Game::EditModeRotate(QPointer<RoomObject> obj, const int x, const int y, co
         zdir = MathUtil::GetRotatedAxis(z_rotate_rad, zdir, player_zdir);
     }
 
-    obj->SetInterpolate(true);
+    obj->GetProperties()->SetInterpolate(false);
     obj->SetInterpolation();
 
-    obj->SetXDirs(xdir, ydir, zdir);
+    obj->GetProperties()->SetXDirs(xdir, ydir, zdir);
     if (unit_scale == 0) {
         obj->SnapXDirsToMajorAxis();
     }
-    obj->SetB("sync", true);
+    obj->GetProperties()->SetSync(true);
+    obj->GetProperties()->SetInterpolate(true);
 }
 
 void Game::EditModeScale(QPointer<RoomObject> obj, const int x, const int y, const int z)
 {
     QPointer <Room> r = env->GetCurRoom();
-    if (r->GetB("locked")) {
+    if (r->GetProperties()->GetLocked()) {
         MathUtil::ErrorLog("Warning: cannot do scale, room.locked=true");
         return;
     }
@@ -3534,7 +3598,7 @@ void Game::EditModeScale(QPointer<RoomObject> obj, const int x, const int y, con
     }
 
     const float scale_amount = unit_scale_amount[unit_scale];
-    const QVector3D cur_scale = obj->GetV("scale");
+    const QVector3D cur_scale = obj->GetProperties()->GetScale()->toQVector3D();
 
     const float snap_x = float(int(roundf(cur_scale.x() / scale_amount))) * scale_amount;
     const float snap_y = float(int(roundf(cur_scale.y() / scale_amount))) * scale_amount;
@@ -3544,17 +3608,17 @@ void Game::EditModeScale(QPointer<RoomObject> obj, const int x, const int y, con
     const float new_y = ((snap_y + scale_amount * y) > 0.0f) ? snap_y + scale_amount * y : obj->GetScale().y();
     const float new_z = ((snap_z + scale_amount * z) > 0.0f) ? snap_z + scale_amount * z : obj->GetScale().z();
 
-    obj->SetInterpolate(true);
+    obj->GetProperties()->SetInterpolate(true);
     obj->SetInterpolation();
 
-    obj->SetV("scale", QVector3D(new_x, new_y, new_z));
-    obj->SetB("sync", true);
+    obj->GetProperties()->SetScale(QVector3D(new_x, new_y, new_z));
+    obj->GetProperties()->SetSync(true);
 }
 
 void Game::EditModeCollisionScale(QPointer<RoomObject> obj, const int x, const int y, const int z)
 {
     QPointer <Room> r = env->GetCurRoom();
-    if (r->GetB("locked")) {
+    if (r->GetProperties()->GetLocked()) {
         MathUtil::ErrorLog("Warning: cannot do collision scale, room.locked=true");
         return;
     }
@@ -3564,7 +3628,7 @@ void Game::EditModeCollisionScale(QPointer<RoomObject> obj, const int x, const i
     }
 
     const float scale_amount = unit_scale_amount[unit_scale];
-    const QVector3D cs = obj->GetV("collision_scale");
+    const QVector3D cs = obj->GetProperties()->GetCollisionScale()->toQVector3D();
 
     const float snap_x = float(int(roundf(cs.x() / scale_amount))) * scale_amount;
     const float snap_y = float(int(roundf(cs.y() / scale_amount))) * scale_amount;
@@ -3574,17 +3638,17 @@ void Game::EditModeCollisionScale(QPointer<RoomObject> obj, const int x, const i
     const float new_y = ((snap_y + scale_amount * y) > 0.0f) ? snap_y + scale_amount * y : cs.y();
     const float new_z = ((snap_z + scale_amount * z) > 0.0f) ? snap_z + scale_amount * z : cs.z();
 
-    obj->SetV("collision_scale", QVector3D(new_x, new_y, new_z));
-    obj->SetB("sync", true);
+    obj->GetProperties()->SetCollisionScale(QVector3D(new_x, new_y, new_z));
+    obj->GetProperties()->SetSync(true);
 }
 
 void Game::ClearSelection(const int cursor_index)
-{    
+{
     QPointer <Room> r = env->GetCurRoom();
 
     //57.1 move mouse to top left corner, to fix tooltips sticking around on defocus
-    if (websurface_selected[cursor_index]) {               
-        websurface_selected[cursor_index].clear();        
+    if (websurface_selected[cursor_index]) {
+        websurface_selected[cursor_index].clear();
     }
     if (video_selected[cursor_index]) {
         video_selected[cursor_index].clear();
@@ -3611,13 +3675,13 @@ QPointer <AbstractWebSurface> Game::GetWebSurfaceSelected()
     return QPointer <AbstractWebSurface> ();
 }
 
-void Game::StartEscapeToPocketspace()
+void Game::StartEscapeToHome()
 {
     fade_time.start();
     fadestate = FADE_POCKET1;
 }
 
-void Game::EscapeToPocketspace()
+void Game::EscapeToHome()
 {
     QMatrix4x4 player_xform = player->GetTransform();
     player_xform.rotate(180.0f, 0, 1, 0);
@@ -3638,8 +3702,8 @@ void Game::EscapeToPocketspace()
         env->NavigateToRoom(player, env->GetRootRoom());
     }
 
-    player->SetV("pos", m.column(3).toVector3D());
-    player->SetV("dir", m.column(2).toVector3D());
+    player->GetProperties()->SetPos(m.column(3).toVector3D());
+    player->GetProperties()->SetDir(m.column(2).toVector3D());
     player->UpdateDir();
 
     ClearSelection(0);
@@ -3654,33 +3718,33 @@ void Game::SetWindowSize(const QSize s)
 
 void Game::CreateNewWorkspace(const QString path)
 {    
-    //create new path
-    const QString abs_path = path + "/index.html";
-    const QString abs_file_url = QUrl::fromLocalFile(abs_path).toString();
-
     //create directory structure for it
     QDir path_dir(path);
     if (!path_dir.exists()) {
         path_dir.mkpath(".");
-    }   
+    }
+
+    //create new path
+    const QString abs_path = path + "/index.html";
+    const QUrl portal_url = QUrl::fromLocalFile(abs_path);
 
     QPointer <Room> r = new Room();
-    r->SetS("url", abs_path);
+    r->GetProperties()->SetURL(abs_path);
     r->Create_Default_Workspace();
     r->SaveXML(abs_path);
     delete r;
 
     //generate blank/default template room and save
     //we always load the portal locally
-    CreatePortal(abs_file_url, false);
+    CreatePortal(portal_url, false);
 
     //do portal for multiplayer
-    SoundManager::Play(SOUND_SAVED, false, player->GetV("pos"), 1.0f);
-    bookmarks->AddWorkspace(abs_file_url);
+    SoundManager::Play(SOUND_SAVED, false, player->GetProperties()->GetPos()->toQVector3D(), 1.0f);
+    bookmarks->AddWorkspace(abs_path);
 }
 
 void Game::UpdateControllers()
-{    
+{
     controller_manager->SetHapticsEnabled(SettingsManager::GetHapticsEnabled());
     controller_manager->Update(SettingsManager::GetGamepadEnabled());
 
@@ -3721,8 +3785,8 @@ void Game::UpdateControllers()
     const bool speaking = (key_held_for_speaking || controller_held_for_speaking);
     if (SoundManager::GetCaptureDeviceEnabled() &&
             !SettingsManager::GetMicAlwaysOn() &&
-            speaking != player->GetB("speaking")) {
-        player->SetB("speaking", speaking);
+            speaking != player->GetSpeaking()) {
+        player->SetSpeaking(speaking);
     }
 
     //59.7 - Updated controller player states
@@ -3731,7 +3795,7 @@ void Game::UpdateControllers()
             && !JNIUtil::GetGamepadConnected()
 #endif
             ) {
-        if (player->GetS("hmd_type") == "rift") {
+        if (player->GetHMDType() == "rift") {
             QPointer <QObject> c = qvariant_cast<QObject *>(player->GetProperties()->property("touch"));
             if (c) {
                 c->setProperty("left_stick_x", s[0].x);
@@ -3754,7 +3818,7 @@ void Game::UpdateControllers()
                 c->setProperty("button_b", s[1].b[1].value);
             }
         }
-        else if (player->GetS("hmd_type") == "vive") {
+        else if (player->GetHMDType() == "vive") {
             QPointer <QObject> c = qvariant_cast<QObject *>(player->GetProperties()->property("vive"));
             if (c) {
                 c->setProperty("left_trackpad_x", s[0].x);
@@ -3772,7 +3836,7 @@ void Game::UpdateControllers()
                 c->setProperty("right_grip", s[1].t[1].value);
             }
         }
-        else if (player->GetS("hmd_type") == "wmxr") {
+        else if (player->GetHMDType() == "wmxr") {
             QPointer <QObject> c = qvariant_cast<QObject *>(player->GetProperties()->property("wmxr"));
             if (c) {
                 c->setProperty("left_stick_x", s[0].x);
@@ -3795,7 +3859,7 @@ void Game::UpdateControllers()
             }
         }
 #ifdef __ANDROID__
-        else if (player->GetS("hmd_type") == "daydream") {
+        else if (player->GetHMDType() == "daydream") {
             QPointer <QObject> c = qvariant_cast<QObject *>(player->GetProperties()->property("daydream"));
             if (c) {
                 c->setProperty("left_stick_x", s[0].x);
@@ -3817,7 +3881,7 @@ void Game::UpdateControllers()
                 c->setProperty("right_menu", s[1].b[1].value);
             }
         }
-        else if (player->GetS("hmd_type") == "gear" || player->GetS("hmd_type") == "go") { // Works with Go
+        else if (player->GetHMDType() == "gear" || player->GetHMDType() == "go") { // Works with Go
             QPointer <QObject> c = qvariant_cast<QObject *>(player->GetProperties()->property("gear"));
             if (c) {
                 c->setProperty("left_trackpad_x", s[0].x);
@@ -3839,9 +3903,7 @@ void Game::UpdateControllers()
     else if (controller_manager->GetUsingGamepad()) { //Note: 59.7 - currently has to be one or the other, might we want to support both at once?
         QPointer <QObject> c = qvariant_cast<QObject *>(player->GetProperties()->property("xbox"));
         if (c) {
-//#ifdef __ANDROID__
-//            c->setProperty("connected", JNIUtil::GetGamepadConnected());
-//#endif
+            c->setProperty("connected", controller_manager->GetUsingGamepad());
             c->setProperty("left_stick_x", s[0].x);
             c->setProperty("left_stick_y", s[0].y);
             c->setProperty("left_trigger", s[0].t[0].value);
@@ -3867,34 +3929,33 @@ void Game::UpdateControllers()
             c->setProperty("right_stick_click", s[1].b[6].value);
         }
     }
+
+    if (!controller_manager->GetUsingGamepad()) { //Note: 59.7 - currently has to be one or the other, might we want to support both at once?
+        QPointer <QObject> c = qvariant_cast<QObject *>(player->GetProperties()->property("xbox"));
+        if (c) {
+            c->setProperty("connected", false);
+        }
+    }
     //59.7 - End Updated controller player states
 
-    player->SetV("hand0_trackpad", QVector3D(s[0].x, s[0].y, 0.0f));
-    player->SetV("hand1_trackpad", QVector3D(s[1].x, s[1].y, 0.0f));
+    player->GetProperties()->SetHand0Trackpad(QVector3D(s[0].x, s[0].y, 0.0f));
+    player->GetProperties()->SetHand1Trackpad(QVector3D(s[1].x, s[1].y, 0.0f));
 
     float x0 = s[0].x;
     float y0 = s[0].y;
     float x1 = s[1].x;
     float y1 = s[1].y;
-#if defined(OCULUS_SUBMISSION_BUILD) && defined(__ANDROID__)
-    // Headset trackpad is also used for locomotion
-    if (!JNIUtil::GetGamepadConnected()) {
-        x0 += x1;
-        y0 += y1;
-        x1 = 0.0f;
-        y1 = 0.0f;
-    }
-#endif
 
-    const float snapturn_axis_threshold = 0.8f;
 #ifndef __ANDROID__
+    const float snapturn_axis_threshold = 0.8f;
     const float axis_threshold = 0.2f; //state["threshold"].toFloat();
 #else
-    const float axis_threshold = (player->GetS("hmd_type") == "gear" || player->GetS("hmd_type") == "go")?0.2f:0.5f; //state["threshold"].toFloat();
+    const float snapturn_axis_threshold = (JNIUtil::GetGamepadConnected())?0.8f:0.2f;
+    const float axis_threshold = (player->GetHMDType() == "gear" || player->GetHMDType() == "go")?0.2f:0.5f; //state["threshold"].toFloat();
 #endif
 
     //don't use vive controllers for moving
-    if (player->GetS("hmd_type") == "vive" && !SettingsManager::GetViveTrackpadMovement()) {
+    if (player->GetHMDType() == "vive" && !SettingsManager::GetViveTrackpadMovement()) {
         x0 = 0.0f;
         y0 = 0.0f;
         x1 = 0.0f;
@@ -3915,9 +3976,8 @@ void Game::UpdateControllers()
         for (int i=0; i<2; ++i) {
             ControllerButtonState & b_click = s[i].GetClick();
             ControllerButtonState & b_teleport = s[i].GetTeleport();
-            ControllerButtonState & b_pocketspace = s[i].GetPocketspace();
-//            qDebug() << "GAME::UPDATECONTROLLERS B_POCKETSPACE" << b_pocketspace.hover << b_pocketspace.pressed << b_pocketspace.proc_press << b_pocketspace.proc_release;
-            ControllerButtonState & b_grab = s[i].GetGrab();           
+            ControllerButtonState & b_home = s[i].GetHome();
+            ControllerButtonState & b_grab = s[i].GetGrab();
 
 #if defined(__ANDROID__)
             player->SetCursorActive(s[i].active, i);
@@ -3934,7 +3994,7 @@ void Game::UpdateControllers()
             const QMatrix4x4 m = s[i].xform;
             QMatrix4x4 m2 = player->GetTransform() * m;
             //59.9 - angle the laser 15 degrees downward for spatially tracked controllers *other than* Oculus Touch
-            if (player->GetS("hmd_type") != "rift" && !(player->GetS("hmd_type") == "gear" && i == 1)) {
+            if (player->GetHMDType() != "rift" && !(player->GetHMDType() == "gear" && i == 1)) {
                 m2.rotate(-15.0f, 1, 0, 0);
             }
             m2.setColumn(2, -m2.column(2));
@@ -3943,17 +4003,17 @@ void Game::UpdateControllers()
 #ifdef __ANDROID__
             if (b_click.hover || b_teleport.hover || b_grab.pressed ||
                     (i == 0 && controller_manager->GetHMDManager()->GetControllerTracked(0)) ||
-                    (i == 1 && player->GetS("hmd_type") == "gear" && !controller_manager->GetHMDManager()->GetControllerTracked(0))) { // Gear: Draw regardless of if headset is pressed, when controller is not present
+                    (i == 1 && player->GetHMDType() == "gear" && !controller_manager->GetHMDManager()->GetControllerTracked(0))) { // Gear: Draw regardless of if headset is pressed, when controller is not present
                 dist = UpdateCursorRaycast(m2, i);
             }
 
             //Always show laser on Android
-            if (i == 1 && player->GetS("hmd_type") == "gear") s[i].laser_length = 0.0f;
+            if (i == 1 && player->GetHMDType() == "gear") s[i].laser_length = 0.0f;
             else s[i].laser_length = ((dist != FLT_MAX) ? dist : 100.0f);
 
             //Base the laser transparency on the angle relative to the floor
             float angle = MathUtil::RadToDeg(asin(QVector3D::dotProduct(controller_dir, QVector3D(0.0f,1.0f,0.0f))));
-            if (player->GetS("hmd_type") != "rift") {
+            if (player->GetHMDType() != "rift") {
                 angle += 15.0f;
             }
 
@@ -4012,8 +4072,8 @@ void Game::UpdateControllers()
                         websurface_focused = true;
                         focus_websurface = websurface_selected[i];
 
-                        last_scroll = QPointF(float(websurface_selected[i]->GetI("width"))*cursor_uv[i].x(),
-                                       float(websurface_selected[i]->GetI("width"))*cursor_uv[i].y());
+                        last_scroll = QPointF(float(websurface_selected[i]->GetProperties()->GetWidth())*cursor_uv[i].x(),
+                                       float(websurface_selected[i]->GetProperties()->GetHeight())*cursor_uv[i].y());
                         focus_websurface_cursor_uv = last_scroll;
                     }
                     else{
@@ -4023,7 +4083,7 @@ void Game::UpdateControllers()
                     }
 #endif
 
-                    r->CallJSFunction("room.onMouseDown", player);
+                    r->CallJSFunction("room.onMouseDown", player, multi_players);
 
                     if (!room_has_fn_onmousedown) {
                         StartOpInteractionDefault(i);
@@ -4049,19 +4109,9 @@ void Game::UpdateControllers()
                     focus_websurface.clear();
 #endif
 
-                    //room onclick                    
-                    r->CallJSFunction("room.onMouseUp", player);
-                    r->CallJSFunction("room.onClick", player);
-
-                    //object onclick                    
-                    QPointer <RoomObject> o = r->GetRoomObject(player->GetCursorObject(i));
-                    if (o) {
-                        //55.2 - onclick is on mouse release, and should only happen once per mouse click
-                        QString click_code = o->GetS("onclick");
-                        if (click_code.length() > 0) { //special javascript onclick code to run                            
-                            r->CallJSFunction(click_code, player);
-                        }
-                    }
+                    //room onclick
+                    r->CallJSFunction("room.onMouseUp", player, multi_players);
+                    r->CallJSFunction("room.onClick", player, multi_players);
 
                     if (!room_has_fn_onmouseup && !room_has_fn_onclick) {
 #ifdef __ANDROID__
@@ -4075,11 +4125,11 @@ void Game::UpdateControllers()
                     }
                 }
 
-                if (b_pocketspace.proc_press) {
-                    b_pocketspace.proc_press = false;
+                if (b_home.proc_press) {
+                    b_home.proc_press = false;
                 }
-                if (b_pocketspace.proc_release) {
-                    b_pocketspace.proc_release = false;
+                if (b_home.proc_release) {
+                    b_home.proc_release = false;
                     if (controller_manager->GetHMDManager() && (controller_manager->GetHMDManager()->GetHMDType() == "go" || controller_manager->GetHMDManager()->GetHMDType() == "gear")){
                         if (env->GetCurRoom() == env->GetRootRoom()){
 #if defined(__ANDROID__) && defined(OCULUS_SUBMISSION_BUILD)
@@ -4090,15 +4140,15 @@ void Game::UpdateControllers()
                             StartResetPlayer();
                         }
                     }
-                    else{
-                        StartEscapeToPocketspace();
+                    else {
+                        virtualmenu->MenuButtonPressed();
                     }
                 }
 
                 //let player grab stuff close by
                 if (b_grab.proc_press) {
                     b_grab.proc_press = false;
-                    if (dist < r->GetF("grab_dist")) {
+                    if (dist < r->GetProperties()->GetGrabDist()) {
                         StartOpSpatialControllerEdit(i);
                     }
                 }
@@ -4106,22 +4156,22 @@ void Game::UpdateControllers()
                     b_grab.proc_release = false;
                     EndOpSpatialControllerEdit(i);
                 }
-            }                                  
-        } 
+            }
+        }
     }
 #ifdef __ANDROID__
     else if (controller_manager->GetUsingGamepad() && JNIUtil::GetGamepadConnected()) {
         if (!controller_manager->GetHMDManager() || (controller_manager->GetHMDManager() && !controller_manager->GetHMDManager()->GetEnabled())) {
-            cursor_active = 0;
             ComputeMouseCursorTransform(windowSize, QPointF(windowSize.width()/2, windowSize.height()/2));
             UpdateCursorRaycast(GetMouseCursorTransform(), 0);
+            cursor_active = 0;
         }
         else if (controller_manager->GetHMDManager() && controller_manager->GetHMDManager()->GetEnabled()){
+            QMatrix4x4 m = controller_manager->GetHMDManager()->GetHMDTransform();
+            QMatrix4x4 m2 = player->GetTransform() * m;
+            m2.setColumn(2, -m2.column(2));
+            UpdateCursorRaycast(m2, 0);
             cursor_active = 0;
-            QMatrix4x4 m2 = controller_manager->GetHMDManager()->GetHMDTransform();
-            QMatrix4x4 m = player->GetTransform() * m2;
-            m.setColumn(2, -m.column(2));
-            UpdateCursorRaycast(m, 0);
         }
 #else
     else if (controller_manager->GetUsingGamepad() && SettingsManager::GetGamepadEnabled()) {
@@ -4134,7 +4184,7 @@ void Game::UpdateControllers()
         //LMB
         if (s[1].t[0].proc_press) {
             s[1].t[0].proc_press = false;
-            r->CallJSFunction("room.onMouseDown", player);
+            r->CallJSFunction("room.onMouseDown", player, multi_players);
 
             if (!room_has_fn_onmousedown) {
                 StartOpInteractionDefault(0);
@@ -4144,21 +4194,11 @@ void Game::UpdateControllers()
             s[1].t[0].proc_release = false;
 
             //room onclick
-            r->CallJSFunction("room.onMouseUp", player);
-            r->CallJSFunction("room.onClick", player);
-
-            //object onclick
-            QPointer <RoomObject> o = r->GetRoomObject(player->GetCursorObject(0));
-            if (o) {
-                //55.2 - onclick is on mouse release, and should only happen once per mouse click
-                QString click_code = o->GetS("onclick");
-                if (click_code.length() > 0) { //special javascript onclick code to run
-                    r->CallJSFunction(click_code, player);
-                }
-            }
+            r->CallJSFunction("room.onMouseUp", player, multi_players);
+            r->CallJSFunction("room.onClick", player, multi_players);
 
             if (!room_has_fn_onmouseup && !room_has_fn_onclick) {
-                    EndOpInteractionDefault(0);
+                EndOpInteractionDefault(0);
             }
         }
 
@@ -4190,25 +4230,25 @@ void Game::UpdateControllers()
         //run
         if (s[0].b[1].proc_press) {
             s[0].b[1].proc_press = false;
-            player->SetB("running", true);
+            player->SetRunning(true);
         }
         if (s[0].b[1].proc_release) {
             s[0].b[1].proc_release = false;
-            player->SetB("running", false);
+            player->SetRunning(false);
         }
         if (s[0].b[6].proc_press) {
             s[0].b[6].proc_press = false;
-            player->SetB("running", true);
+            player->SetRunning(true);
         }
         if (s[0].b[6].proc_release) {
             s[0].b[6].proc_release = false;
-            player->SetB("running", false);
+            player->SetRunning(false);
         }
 
-        //pocketspace
+        //home button
         if (s[0].b[0].proc_release) {
             s[0].b[0].proc_release = false;
-            StartEscapeToPocketspace();
+            virtualmenu->MenuButtonPressed();
         }
 
         //reset hmd
@@ -4221,7 +4261,7 @@ void Game::UpdateControllers()
 
         //show menu
         if (s[0].b[3].proc_release) {
-            s[0].b[3].proc_release = false;            
+            s[0].b[3].proc_release = false;
         }
 
         //turn left
@@ -4261,7 +4301,7 @@ void Game::UpdateControllers()
         //flight
         if (s[1].b[3].proc_release) {
             s[1].b[3].proc_release = false;
-            player->SetFlying(!player->GetB("flying"));
+            player->SetFlying(!player->GetFlying());
         }
 
         //refresh
@@ -4283,7 +4323,7 @@ void Game::UpdateControllers()
             QKeyEvent e(keypress, Qt::Key_C, 0);
             keyReleaseEvent(&e);
         }
-    }   
+    }
 
 #ifndef __ANDROID__
     //WASD translation stuff
@@ -4291,7 +4331,7 @@ void Game::UpdateControllers()
             || controller_manager->GetUsingSpatiallyTrackedControllers())
 #else
     //if (controller_manager->GetUsingSpatiallyTrackedControllers())
-    //    player->SetB("running", sqrt(pow(x0,2) + pow(y0,2)) > 1.0f - axis_threshold);
+    //    player->SetRunning(sqrt(pow(x0,2) + pow(y0,2)) > 1.0f - axis_threshold);
 
     x0 += JNIUtil::GetWalkJoystickX();
     y0 += -JNIUtil::GetWalkJoystickY();
@@ -4303,51 +4343,51 @@ void Game::UpdateControllers()
     {
 
         if (controller_x[0] >= -axis_threshold && x0 < -axis_threshold) {
-            player->SetB("walk_left", true);
+            player->SetWalkLeft(true);
         }
         else if (controller_x[0] < -axis_threshold && x0 >= -axis_threshold) {
-            player->SetB("walk_left", false);
+            player->SetWalkLeft(false);
         }
 
         if (controller_x[0] <= axis_threshold && x0 > axis_threshold) {
-            player->SetB("walk_right", true);
+            player->SetWalkRight(true);
         }
         else if (controller_x[0] > axis_threshold && x0 <= axis_threshold) {
-            player->SetB("walk_right", false);
+            player->SetWalkRight(false);
         }
 
         if (controller_y[0] <= axis_threshold && y0 > axis_threshold) {
-            player->SetB("walk_forward", true);
+            player->SetWalkForward(true);
         }
         else if (controller_y[0] > axis_threshold && y0 <= axis_threshold) {
-            player->SetB("walk_forward", false);
+            player->SetWalkForward(false);
         }
 
         if (controller_y[0] >= -axis_threshold && y0 < -axis_threshold) {
-            player->SetB("walk_back", true);
+            player->SetWalkBack(true);
         }
         else if (controller_y[0] < -axis_threshold && y0 >= -axis_threshold) {
-            player->SetB("walk_back", false);
+            player->SetWalkBack(false);
         }
     }
 #ifdef __ANDROID__
     else {
-        player->SetB("walk_left", false);
-        player->SetB("walk_right", false);
-        player->SetB("walk_forward", false);
-        player->SetB("walk_back", false);
+        player->SetWalkForward(false);
+        player->SetWalkBack(false);
+        player->SetWalkLeft(false);
+        player->SetWalkRight(false);
         player->DoSpinLeft(false);
         player->DoSpinRight(false);
-        player->SetB("fly_up", false);
-        player->SetB("fly_down", false);
-        player->SetB("jump", false);
+        player->SetFlyUp(false);
+        player->SetFlyDown(false);
+        player->SetJump(false);
     }
 #endif
 
     const float sx = fabsf(x0) > axis_threshold ? fabsf(x0) : 1.0f; //scale speed based on stick axis position (or if its around centre, set to 1)
     const float sz = fabsf(y0) > axis_threshold ? fabsf(y0) : 1.0f;
-    player->SetF("scale_velx", sx);
-    player->SetF("scale_velz", sz);
+    player->SetScaleVelX(sx);
+    player->SetScaleVelY(sz);
 
     controller_x[0] = x0;
     controller_y[0] = y0;
@@ -4357,28 +4397,28 @@ void Game::UpdateControllers()
     const bool state_can_walk = (state == JVR_STATE_DEFAULT || state == JVR_STATE_INTERACT_TELEPORT);
 
     //do player update stuff from within here (where autorepeating keys matters)
-    if (state_can_walk && !player->GetB("entering_text")) {
+    if (state_can_walk && !player->GetEnteringText()) {
         player->DoSpinLeft((keys[Qt::Key_Q]) && !keys[Qt::Key_Control]);
         player->DoSpinRight((keys[Qt::Key_E]) && !keys[Qt::Key_Control]);
-        player->SetB("fly_up", (keys[Qt::Key_Space]) && player->GetB("flying"));
-        player->SetB("fly_down", (keys[Qt::Key_Shift]) && player->GetB("flying"));
-        const bool do_jump = keys[Qt::Key_Space] && !player->GetB("flying");
-        player->SetB("jump", do_jump); //jumping stuff
+        player->SetFlyUp((keys[Qt::Key_Space]) && player->GetFlying());
+        player->SetFlyDown((keys[Qt::Key_Shift]) && player->GetFlying());
+        const bool do_jump = keys[Qt::Key_Space] && !player->GetFlying();
+        player->SetJump(do_jump); //jumping stuff
         if (do_jump) {
-            player->SetB("follow_mode", false);
-            player->SetS("follow_mode_userid", "");
+            player->SetFollowMode(false);
+            player->SetFollowModeUserID("");
         }
     }
-    else {        
-        player->SetB("walk_forward", false);
-        player->SetB("walk_back", false);
-        player->SetB("walk_left", false);
-        player->SetB("walk_right", false);
+    else {
+        player->SetWalkForward(false);
+        player->SetWalkBack(false);
+        player->SetWalkLeft(false);
+        player->SetWalkRight(false);
         player->DoSpinLeft(false);
         player->DoSpinRight(false);
-        player->SetB("fly_up", false);
-        player->SetB("fly_down", false);
-        player->SetB("jump", false);
+        player->SetFlyUp(false);
+        player->SetFlyDown(false);
+        player->SetJump(false);
     }
 
     //update controller axis stuff
@@ -4423,11 +4463,11 @@ void Game::UpdateControllers()
                 //                        const int val = (obj->GetPos() - m.column(3).toVector3D()).length() * 4000.0f;
                 //                        controller_manager->TriggerHapticPulse(i, val);
                 //                    }
-                obj->SetV("pos", m.column(3).toVector3D());
-                obj->SetV("xdir", m.column(0).toVector3D().normalized());
-                obj->SetV("ydir", m.column(1).toVector3D().normalized());
-                obj->SetV("zdir", m.column(2).toVector3D().normalized());
-                obj->SetB("sync", true);
+                obj->GetProperties()->SetPos(m.column(3).toVector3D());
+                obj->GetProperties()->SetXDir(m.column(0).toVector3D().normalized());
+                obj->GetProperties()->SetYDir(m.column(1).toVector3D().normalized());
+                obj->GetProperties()->SetZDir(m.column(2).toVector3D().normalized());
+                obj->GetProperties()->SetSync(true);
             }
         }
     }
@@ -4445,7 +4485,7 @@ void Game::UpdateControllers()
         }
     }
     else{
-        controller_x[1] += ((SettingsManager::GetInvertXEnabled())?1:-1) * JNIUtil::GetViewJoystickX();
+        controller_x[1] += ((SettingsManager::GetInvertXEnabled())?-1:1) * JNIUtil::GetViewJoystickX();
         controller_y[1] += ((SettingsManager::GetInvertYEnabled())?1:-1) * JNIUtil::GetViewJoystickY();
     }
 #endif
@@ -4466,7 +4506,7 @@ void Game::UpdateControllers()
 #else
         if (SettingsManager::GetComfortMode() && (JNIUtil::GetViewJoystickX() == 0 || JNIUtil::GetViewJoystickY() == 0)) {
             if (!controller_manager->GetHMDManager() || (controller_manager->GetHMDManager() && !controller_manager->GetHMDManager()->GetEnabled())) {
-                player->SpinView(controller_x[1] * player->GetF("delta_time") * rot_speed, true);
+                player->SpinView(controller_x[1] * player->GetDeltaTime() * rot_speed, true);
             }
             else if (fabsf(controller_x[1]) > snapturn_axis_threshold && fabsf(last_controller_x[1]) < snapturn_axis_threshold) {
                 if (controller_x[1] > 0.0f) {
@@ -4479,13 +4519,13 @@ void Game::UpdateControllers()
         }
 #endif
         else {
-            player->SpinView(controller_x[1] * player->GetF("delta_time") * rot_speed, true);
+            player->SpinView(controller_x[1] * player->GetDeltaTime() * rot_speed, true);
         }
     }
 
     if (controller_y[1] != 0.0f) {
         if (GetMouseDoPitch()) {
-            const float tilt_amount = controller_y[1] * player->GetF("delta_time") * rot_speed * (SettingsManager::GetInvertYEnabled() ? 1.0f : -1.0f);
+            const float tilt_amount = controller_y[1] * player->GetDeltaTime() * rot_speed * (SettingsManager::GetInvertYEnabled() ? 1.0f : -1.0f);
             player->TiltView(tilt_amount);
         }
         else {
@@ -4497,10 +4537,10 @@ void Game::UpdateControllers()
             }
             else {
                 if (controller_y[1] > snapturn_axis_threshold) { // && last_controller_y[1] < snapturn_axis_threshold) {
-                    player->SetB("jump", true); //jumping stuff
+                    player->SetJump(true); //jumping stuff
                 }
                 else {
-                    player->SetB("jump", false); //jumping stuff
+                    player->SetJump(false); //jumping stuff
                 }
             }
         }
@@ -4508,12 +4548,19 @@ void Game::UpdateControllers()
 
     //update last controller position
     memcpy(last_controller_x, controller_x, 2 * sizeof(float));
-    memcpy(last_controller_y, controller_y, 2 * sizeof(float));   
+    memcpy(last_controller_y, controller_y, 2 * sizeof(float));
 
 #ifdef __ANDROID__
 
     if (controller_manager->GetHMDManager() && controller_manager->GetHMDManager()->GetEnabled() && !JNIUtil::GetGamepadConnected()){
         SettingsManager::SetMicAlwaysOn(true);
+        player->SetFlying(true);
+        if (sqrt(pow(controller_x[0],2) + pow(controller_y[0],2)) > 0.8f){
+                player->SetRunning(true);
+        }
+        else{
+            player->SetRunning(false);
+        }
         return;
     }
     else{
@@ -4526,33 +4573,33 @@ void Game::UpdateControllers()
         SettingsManager::SetMicAlwaysOn(b);
 
         if (!b) {
-            player->SetB("speaking", JNIUtil::GetSpeaking());
+            player->SetSpeaking(JNIUtil::GetSpeaking());
         }
 
         //Let user fly
-        player->SetB("flying", JNIUtil::GetFlying());
+        player->SetFlying(JNIUtil::GetFlying());
 
         //Let user jump
-        if (!player->GetB("flying")) {
-            player->SetB("jump", JNIUtil::GetJumping());
+        if (!player->GetFlying()) {
+            player->SetJump(JNIUtil::GetJumping());
         }
 
         //Translate user; let user run past certain threshold
-        if (state_can_walk && !player->GetB("entering_text")) {
+        if (state_can_walk && !player->GetEnteringText()) {
             if (!pinching) {
-                player->SetB("running", JNIUtil::GetRunning());
+                player->SetRunning(JNIUtil::GetRunning());
             }
         }
         else {
-            player->SetB("walk_forward", false);
-            player->SetB("walk_back", false);
-            player->SetB("walk_left", false);
-            player->SetB("walk_right", false);
+            player->SetWalkForward(false);
+            player->SetWalkBack(false);
+            player->SetWalkLeft(false);
+            player->SetWalkRight(false);
             player->DoSpinLeft(false);
             player->DoSpinRight(false);
-            player->SetB("fly_up", false);
-            player->SetB("fly_down", false);
-            player->SetB("jump", false);
+            player->SetFlyUp(false);
+            player->SetFlyDown(false);
+            player->SetJump(false);
         }
     }
 
@@ -4585,64 +4632,80 @@ void Game::UpdateControllers()
             }
         }
         else{
-            player->SetF("phi", 90);
+            player->SetPhi(90.0f);
         }
     }
     gyroscope_timer.restart();
 #endif
 }
 
-void Game::UpdateVirtualKeyboard()
-{
+void Game::UpdateVirtualMenu()
+{    
     // Draw keyboard if HMD is in use, websurface selected, and text cursor is within a text-editable region
     const bool text_entry = GetPlayerEnteringText();
-    player->SetB("entering_text", text_entry);
+    player->SetEnteringText(text_entry);
 
     //update state of virtual keyboard if HMD is enabled
-    if ((player->GetB("hmd_enabled") || controller_manager->GetUsingGamepad()) && text_entry && !virtualkeyboard->GetVisible()) { //show keyboard if hidden and needed
-//    if (text_entry && !virtualkeyboard->GetVisible()) { //uncomment this and comment above for testing with mouse
-        QVector3D z = -player->GetV("dir");
+    if ((player->GetHMDEnabled() || controller_manager->GetUsingGamepad()) && text_entry && !virtualmenu->GetVisible()) { //show keyboard if hidden and needed
+    //if (text_entry && !virtualmenu->GetVisible()) { //uncomment this and comment above for testing with mouse
+        virtualmenu->SetMenuIndex(VirtualMenuIndex_KEYBOARD);
+        virtualmenu->SetVisible(true);
+
+        if (websurface_selected[0] && websurface_selected[0]->GetTextEditing()) {
+            virtualmenu->SetWebSurface(websurface_selected[0]);
+        }
+        else if (websurface_selected[1] && websurface_selected[1]->GetTextEditing()) {
+            virtualmenu->SetWebSurface(websurface_selected[1]);
+        }
+    }
+
+    virtualmenu->Update();
+
+    if (virtualmenu->GetVisible()) {
+        if (virtualmenu->GetDoBack()) {
+            StartResetPlayer();
+        }
+        if (virtualmenu->GetDoForward()) {
+            StartResetPlayerForward();
+        }
+        if (virtualmenu->GetDoReload()) {
+            env->ReloadRoom();
+        }
+        if (virtualmenu->GetDoEscapeToHome()) {
+            StartEscapeToHome();
+        }
+        if (virtualmenu->GetDoExit()) {
+            SetDoExit(true);
+        }
+        if (virtualmenu->GetDoCreatePortal()) {
+            CreatePortal(virtualmenu->GetDoCreatePortalURL(), true);
+            virtualmenu->SetVisible(false);
+        }
+    }
+    else {
+        QVector3D z = -player->GetProperties()->GetDir()->toQVector3D();
         z.setY(0.0f);
         z.normalize();
         const QVector3D y(0,1,0);
         const QVector3D x = QVector3D::crossProduct(y, z).normalized();
 
-        QVector3D p = player->GetV("eye_point");
-        p.setY(player->GetV("pos").y() + 0.5f);
+        QVector3D p = player->GetProperties()->GetEyePoint();
+        p.setY(player->GetProperties()->GetPos()->toQVector3D().y());
 
         QMatrix4x4 m;
-        m.translate(p);
-        m.setColumn(0, x * 0.6f);
-        m.setColumn(1, y * 0.6f);
-        m.setColumn(2, z * 0.6f);
+        m.translate(p - z * 2.0f);
+        m.setColumn(0, x);
+        m.setColumn(1, y);
+        m.setColumn(2, z);
 
-        virtualkeyboard->SetModelMatrix(m);
-        virtualkeyboard->SetVisible(true);
-
-        if (websurface_selected[0] && websurface_selected[0]->GetTextEditing()) {
-            virtualkeyboard->SetWebSurface(websurface_selected[0]);
-        }
-        else if (websurface_selected[1] && websurface_selected[1]->GetTextEditing()) {
-            virtualkeyboard->SetWebSurface(websurface_selected[1]);
-        }
-    }
-    else if (virtualkeyboard->GetVisible()) {
-        if (player->GetWalking()) { //if player moves, hide the virtual keyboard
-            virtualkeyboard->SetVisible(false);
-            virtualkeyboard->SetWebSurface(NULL);
-        }
-        else {
-            //59.3 - note! potentially costly on Android (3-5 msec) when visible
-//            virtualkeyboard->Update();
-        }
+        virtualmenu->SetModelMatrix(m);
     }
 }
 
-void Game::DrawVirtualKeyboard()
+void Game::DrawVirtualMenu()
 {
-    //draw virtual keyboard if visible
-    if (virtualkeyboard->GetVisible()) {
-        virtualkeyboard->DrawGL(Room::GetTransparencyShader());
+    if (virtualmenu->GetVisible() && !virtualmenu->GetTakingScreenshot()) {
+        virtualmenu->DrawGL(Room::GetTransparencyShader());
     }
 
     if (GetPrivateWebsurfacesVisible()) {
@@ -4679,7 +4742,7 @@ void Game::SetGamepadButtonPress(const bool b)
     gamepad_button_press = b;
 }
 
-void Game::StartOpInteractionTeleport(const int )
+void Game::StartOpInteractionTeleport(const int i)
 {
     state = JVR_STATE_INTERACT_TELEPORT;
     teleport_held_time.start();
@@ -4688,12 +4751,12 @@ void Game::StartOpInteractionTeleport(const int )
 void Game::EndOpInteractionTeleport(const int i)
 {
 //    qDebug() << "Game::EndOpInteractionTeleport" << i << GetAllowTeleport(i);
-    QPointer <Room> r = env->GetCurRoom();    
+    QPointer <Room> r = env->GetCurRoom();
     QPointer <RoomObject> cursor_obj = r->GetRoomObject(player->GetCursorObject(i));
 
     if (GetAllowTeleport(i) && teleport_held_time.elapsed() > teleport_hold_time_required)
     {
-        if (cursor_obj && cursor_obj->GetType() == "link") {
+        if (cursor_obj && cursor_obj->GetType() == TYPE_LINK) {
             //teleport through an open portal
             teleport_portal = cursor_obj;
             teleport_p.setY(qMax(teleport_p.y(), cursor_obj->GetPos().y()));
@@ -4708,18 +4771,18 @@ void Game::EndOpInteractionTeleport(const int i)
     state = JVR_STATE_DEFAULT;
 }
 
-QPointer <RoomObject> Game::CreatePortal(const QString url, const bool send_multi)
+QPointer <RoomObject> Game::CreatePortal(const QUrl url, const bool send_multi)
 {
 //    qDebug() << "Game::CreatePortal" << url << send_multi;
     QPointer <Room> r = env->GetCurRoom();
     QPointer <RoomObject> new_portal;
-    if (!url.isEmpty()) {
-        QVector3D d = player->GetV("dir");
+    if (r && !url.isEmpty()) {
+        QVector3D d = player->GetProperties()->GetDir()->toQVector3D();
         d.setY(0.0f);
         d.normalize();
 
-        const QVector3D p = player->GetV("pos") + d * 1.5f;
-        const QString portal_jsid = multi_players->GetUserID() + "-" + url;
+        const QVector3D p = player->GetProperties()->GetPos()->toQVector3D() + d * 1.5f;
+        const QString portal_jsid = multi_players->GetUserID() + "-" + url.toString();
         ++global_uuid;
 
         //set up child stuff for portal
@@ -4727,21 +4790,20 @@ QPointer <RoomObject> Game::CreatePortal(const QString url, const bool send_mult
         child_col.setHsl(int(30.0f * r->GetRoomObjects().size()), 128, 128);
 
         new_portal = new RoomObject();
-        new_portal->SetType("link");
-        new_portal->SetURL("", url);
-        new_portal->SetV("pos", p);
+        new_portal->SetType(TYPE_LINK);
+        new_portal->SetURL("", url.toString());
+        new_portal->GetProperties()->SetPos(p);
         new_portal->SetDir(-d);
-        new_portal->SetC("col", child_col);
-        new_portal->SetV("scale", QVector3D(1.8f, 2.5f, 1.0f));
-        new_portal->SetB("_circular", true);
-        new_portal->SetS("js_id", portal_jsid);
-        new_portal->SetSaveToMarkup(false);
-        new_portal->SetB("open", true);
+        new_portal->GetProperties()->SetColour(MathUtil::GetColourAsVector4(child_col));
+        new_portal->GetProperties()->SetScale(QVector3D(1.8f, 2.5f, 1.0f));
+        new_portal->GetProperties()->SetCircular(true);
+        new_portal->GetProperties()->SetJSID(portal_jsid);
+        new_portal->GetProperties()->SetOpen(true);
         r->AddRoomObject(new_portal);
         env->AddRoom(new_portal);
 
         if (send_multi) {
-            multi_players->SetSendPortal(url, portal_jsid);
+            multi_players->SetSendPortal(url.toString(), portal_jsid);
         }
     }
     return new_portal;
@@ -4749,16 +4811,15 @@ QPointer <RoomObject> Game::CreatePortal(const QString url, const bool send_mult
 
 void Game::StartOpInteractionDefault(const int i)
 {
-    QPointer <Room> r = env->GetCurRoom();    
+    QPointer <Room> r = env->GetCurRoom();
     QPointer <RoomObject> o = r->GetRoomObject(player->GetCursorObject(i));
 
-    //            qDebug() << "player->getcursorobject" << player->GetCursorObject(cursor_index) << websurface_selected[cursor_index] << menu.GetWebpage();
-    bool keyboard_clicked = false;
-    if (virtualkeyboard->GetKeySelected(player->GetCursorObject(i)) != 0) {
-        virtualkeyboard->mousePressEvent(i);
-        keyboard_clicked = true;
-    }    
-    else if (o && o->GetType() == "object" && o->GetAssetWebSurface()) {
+    //            qDebug() << "player->getcursorobject" << player->GetCursorObject(cursor_index) << websurface_selected[cursor_index] << menu.GetWebpage();    
+    if (virtualmenu->GetVisible()) {
+        virtualmenu->mousePressEvent(player->GetCursorObject(i));
+    }
+
+    if (o && o->GetType() == TYPE_OBJECT && o->GetAssetWebSurface()) {
         websurface_selected[i] = o->GetAssetWebSurface();
 
         //if websurface is still on about:blank, load it
@@ -4767,20 +4828,20 @@ void Game::StartOpInteractionDefault(const int i)
 //        }
 
         //TODO - control modifier interaction with websurface to generate portals
-        QPoint cursor_pos(float(websurface_selected[i]->GetI("width"))*cursor_uv[i].x(),
-                          float(websurface_selected[i]->GetI("height"))*cursor_uv[i].y());
+        QPoint cursor_pos(float(websurface_selected[i]->GetProperties()->GetWidth())*cursor_uv[i].x(),
+                          float(websurface_selected[i]->GetProperties()->GetHeight())*cursor_uv[i].y());
 
         QMouseEvent e2(QEvent::MouseButtonPress, cursor_pos, Qt::LeftButton, Qt::LeftButton, Qt::NoModifier);
 
         //send a click through if there is no thumb/image id, or the surface is already cursoractive
-        if (websurface_selected[i]->GetFocus() || (o->GetS("thumb_id").length() == 0 && o->GetS("image_id").length() == 0)) {
+        if (websurface_selected[i]->GetFocus() || (o->GetProperties()->GetThumbID().length() == 0 && o->GetProperties()->GetImageID().length() == 0)) {
             websurface_selected[i]->mousePressEvent(&e2, i);
         }
         if (!websurface_selected[i]->GetFocus()) {
             websurface_selected[i]->SetFocus(true); //58.0 - bugfix to make websurfaces active on click for rift/vive
         }
     }
-    else if (o && (o->GetType() == "video" || o->GetType() == "object") && o->GetAssetVideo()) {
+    else if (o && (o->GetType() == TYPE_VIDEO || o->GetType() == TYPE_OBJECT) && o->GetAssetVideo()) {
         video_selected[i] = o->GetAssetVideo();
         video_selected[i]->SetCursorActive(o->GetMediaContext(), true);
 
@@ -4790,14 +4851,14 @@ void Game::StartOpInteractionDefault(const int i)
         video_selected[i]->mousePressEvent(o->GetMediaContext(), &e2);
     }
     else if (websurface_selected[i]) {
-        QPoint cursor_pos(float(websurface_selected[i]->GetI("width"))*cursor_uv[i].x(),
-                          float(websurface_selected[i]->GetI("height"))*cursor_uv[i].y());
+        QPoint cursor_pos(float(websurface_selected[i]->GetProperties()->GetWidth())*cursor_uv[i].x(),
+                          float(websurface_selected[i]->GetProperties()->GetHeight())*cursor_uv[i].y());
         QMouseEvent e2(QEvent::MouseButtonPress, cursor_pos, Qt::LeftButton, Qt::LeftButton, Qt::NoModifier);
         websurface_selected[i]->mousePressEvent(&e2, i);
     }
 
-    //59.3 - make any websurfaces in the room cursor active false (60.0 - only if we didn't click keyboard)
-    if (!keyboard_clicked) {
+    //59.3 - make any websurfaces in the room cursor active false (60.0 - only if we didn't click keyboard) (62.0 - refactored into VirtualMenu)
+    if (!(virtualmenu->GetVisible() && virtualmenu->GetMenuIndex() == VirtualMenuIndex_KEYBOARD)) {
         for (QPointer <AbstractWebSurface> & aw : r->GetAssetWebSurfaces()) {
             if (aw && aw != websurface_selected[i]) {
                 aw->SetFocus(false);
@@ -4807,48 +4868,50 @@ void Game::StartOpInteractionDefault(const int i)
 }
 
 void Game::EndOpInteractionDefault(const int i)
-{    
+{
     QPointer <Room> r = env->GetCurRoom();
     const QString curs = player->GetCursorObject(i);
     QPointer <RoomObject> o = r->GetRoomObject(curs);
 
-    if (virtualkeyboard->GetKeySelected(curs) != 0) {
-        virtualkeyboard->mouseReleaseEvent(i);
-    }    
-    else if (o) {
+    if (virtualmenu->GetVisible()) {
+        virtualmenu->mouseReleaseEvent(player->GetCursorObject(i));
+    }
+
+    if (o) {
         //55.2 - onclick is on mouse release, and should only happen once per mouse click
-        QString click_code = o->GetS("onclick");
+        QString click_code = o->GetProperties()->GetOnClick();
+        qDebug() << "onclick code" << click_code;
         if (click_code.length() > 0) { //special javascript onclick code to run
-            r->CallJSFunction(click_code, player);
+            r->CallJSFunction(click_code, player, multi_players);
         }
 
         //default stuff
-        if (o->GetType() == "link" && o->GetB("active")) {
+        if (o->GetType() == TYPE_LINK && o->GetProperties()->GetActive()) {
             //if portal is closed and click: open
             //hold-click: open and teleport
-            if (!o->GetB("open")) {
+            if (!o->GetProperties()->GetOpen()) {
 #ifdef __ANDROID__
                 // Close all other portals upon opening one
                 const QHash <QString, QPointer <RoomObject> > & envobjects = env->GetCurRoom()->GetRoomObjects();
                 for (auto & each_portal : envobjects) {
-                    if (each_portal && each_portal->GetType() == "link" && each_portal != o) {
-                        if (each_portal->GetB("open") && each_portal->GetB("visible") && !each_portal->GetB("auto_load")) {
-                            if (env->ClearRoom(each_portal)) {
-                                each_portal->SetB("open", false);
-                            }
+                    if (each_portal && each_portal->GetType() == TYPE_LINK && each_portal != o) {
+                        if (each_portal->GetProperties()->GetOpen() && each_portal->GetProperties()->GetVisible() && !each_portal->GetProperties()->GetAutoLoad()) {
+                            each_portal->GetProperties()->SetOpen(false);
+                            if (env->GetCurRoom()->GetConnectedPortal(each_portal))
+                                env->GetCurRoom()->GetConnectedPortal(each_portal)->GetProperties()->SetOpen(false);
                         }
                     }
                 }
 #endif
 
                 env->AddRoom(o);
-                o->SetB("open", true);
+                o->GetProperties()->SetOpen(true);
 
 #ifdef __ANDROID__
                 // Teleport to portal if user opens it
                 QPointer <Room> r = env->GetCurRoom();
                 QPointer <RoomObject> cursor_obj = r->GetRoomObject(player->GetCursorObject(i));
-                if (cursor_obj && cursor_obj->GetType() == "link") {
+                if (cursor_obj && cursor_obj->GetType() == TYPE_LINK) {
                     //teleport through an open portal
                     teleport_portal = cursor_obj;
                     teleport_p.setY(qMax(teleport_p.y(), cursor_obj->GetPos().y()));
@@ -4858,11 +4921,11 @@ void Game::EndOpInteractionDefault(const int i)
             }
             else {
                 if (env->ClearRoom(o)) {
-                    o->SetB("open", false);
+                    o->GetProperties()->SetOpen(false);
                 }
             }
         }
-        else if (o->GetType() == "object" && websurface_selected[i] && o->GetAssetWebSurface()) {
+        else if (o->GetType() == TYPE_OBJECT && websurface_selected[i] && o->GetAssetWebSurface()) {
 
             //if websurface is still on about:blank, load it
 //            if (QString::compare(websurface_selected[i]->GetURL(), "about:blank") == 0) {
@@ -4870,27 +4933,27 @@ void Game::EndOpInteractionDefault(const int i)
 //            }
 
             //click
-            QPoint cursor_pos(float(websurface_selected[i]->GetI("width"))*cursor_uv[i].x(),
-                              float(websurface_selected[i]->GetI("height"))*cursor_uv[i].y());
+            QPoint cursor_pos(float(websurface_selected[i]->GetProperties()->GetWidth())*cursor_uv[i].x(),
+                              float(websurface_selected[i]->GetProperties()->GetHeight())*cursor_uv[i].y());
             QMouseEvent e2(QEvent::MouseButtonRelease, cursor_pos, Qt::LeftButton, Qt::LeftButton, Qt::NoModifier);
             websurface_selected[i]->mouseReleaseEvent(&e2, i);
         }
-        else if (video_selected[i] && (o->GetType() == "video" || o->GetType() == "object") && o->GetAssetVideo()) {
+        else if (video_selected[i] && (o->GetType() == TYPE_VIDEO || o->GetType() == TYPE_OBJECT) && o->GetAssetVideo()) {
             QPoint cursor_pos(float(video_selected[i]->GetWidth(o->GetMediaContext()))*cursor_uv[i].x(),
                               float(video_selected[i]->GetHeight(o->GetMediaContext()))*cursor_uv[i].y());
             QMouseEvent e2(QEvent::MouseButtonRelease, cursor_pos, Qt::LeftButton, Qt::LeftButton, Qt::NoModifier);
             video_selected[i]->mouseReleaseEvent(o->GetMediaContext(), &e2);
         }
-        else if (o->GetType() == "ghost") { //clicking on ghosts
+        else if (o->GetType() == TYPE_GHOST) { //clicking on ghosts
             multi_players->SetAvatarFromGhost(o); //change into ghost
-            SoundManager::Play(SOUND_ASSIGNAVATAR, false, player->GetV("pos"), 1.0f);
+            SoundManager::Play(SOUND_ASSIGNAVATAR, false, player->GetProperties()->GetPos()->toQVector3D(), 1.0f);
             //another option, play/pause it:
 //            o->GetPlaying() ? o->Stop() : o->Play(); //pause/play ghost
-        }       
+        }
     }
     else if (websurface_selected[i]) {
-        QPoint cursor_pos(float(websurface_selected[i]->GetI("width"))*cursor_uv[i].x(),
-                          float(websurface_selected[i]->GetI("height"))*cursor_uv[i].y());
+        QPoint cursor_pos(float(websurface_selected[i]->GetProperties()->GetWidth())*cursor_uv[i].x(),
+                          float(websurface_selected[i]->GetProperties()->GetHeight())*cursor_uv[i].y());
         QMouseEvent e2(QEvent::MouseButtonRelease, cursor_pos, Qt::LeftButton, Qt::LeftButton, Qt::NoModifier);
         websurface_selected[i]->mouseReleaseEvent(&e2, i);
     }
@@ -4902,7 +4965,7 @@ void Game::StartOpSpatialControllerEdit(const int i)
     selected[i] = player->GetCursorObject(i);
 
     QPointer <Room> r = env->GetCurRoom();
-    if (r->GetB("locked")) {
+    if (r->GetProperties()->GetLocked()) {
         MathUtil::ErrorLog("Warning: cannot do edit, object or room.locked=true");
         return;
     }
@@ -4915,7 +4978,7 @@ void Game::StartOpSpatialControllerEdit(const int i)
     }
 
     QPointer <RoomObject> obj = r->GetRoomObject(selected[i]);
-    if (obj.isNull() || obj->GetB("locked")) {
+    if (obj.isNull() || obj->GetProperties()->GetLocked()) {
         return;
     }
 
@@ -4924,7 +4987,7 @@ void Game::StartOpSpatialControllerEdit(const int i)
     r->GetPhysics()->AddRigidBody(obj, COL_WALL, COL_WALL);
 
     // 53.13 fix drag and drop
-    obj->Update(player->GetF("delta_time"));
+    obj->Update(player->GetDeltaTime());
     obj->SetGrabbed(true);
     obj->SetSelected(true);
 
@@ -4957,11 +5020,11 @@ void Game::EndOpSpatialControllerEdit(const int i)
             r->GetPhysics()->AddRigidBody(obj, COL_WALL, COL_PLAYER | COL_WALL);
 
             QVector3D v = (controller_manager->GetStates()[i].xform.column(3).toVector3D() -
-                           controller_manager->GetStates()[i].xform_prev.column(3).toVector3D()) / player->GetF("delta_time");
+                           controller_manager->GetStates()[i].xform_prev.column(3).toVector3D()) / player->GetDeltaTime();
             v = player->GetTransform().mapVector(v);
 
             r->GetPhysics()->SetLinearVelocity(obj, v);
-            obj->SetV("vel", v);
+            obj->GetProperties()->SetVel(v);
             obj->SetGrabbed(false);
             obj->SetSelected(false);
         }
@@ -5001,7 +5064,7 @@ void Game::SaveScreenThumb(const QString out_filename)
 QString Game::GetRoomScreenshotPath(QPointer <Room> r)
 {
     if (r) {
-        return MathUtil::GetScreenshotPath() + MathUtil::MD5Hash(r->GetS("url")) + ".jpg";
+        return MathUtil::GetScreenshotPath() + MathUtil::MD5Hash(r->GetProperties()->GetURL()) + ".jpg";
     }
     return MathUtil::GetScreenshotPath() + "null.jpg";
 }
@@ -5010,16 +5073,16 @@ void Game::SaveBookmark()
 {
     QPointer <Room> r = env->GetCurRoom();
 
-    const QString url = r->GetS("url");
-    const QString title = r->GetS("title");
-    const QVector3D pos = player->GetV("pos");
+    const QString url = r->GetProperties()->GetURL();
+    const QString title = r->GetProperties()->GetTitle();
+    const QVector3D pos = player->GetProperties()->GetPos()->toQVector3D();
 
     if (bookmarks->GetBookmarked(url)) {
         bookmarks->RemoveBookmark(url);
         SoundManager::Play(SOUND_DELETING, false, pos, 1.0f);
     }
     else {
-        const QString thumb_url = QUrl::fromLocalFile(GetRoomScreenshotPath(r)).toString();        
+        const QString thumb_url = QUrl::fromLocalFile(GetRoomScreenshotPath(r)).toString();
         bookmarks->AddBookmark(url, title, thumb_url);
         SoundManager::Play(SOUND_SAVED, false, pos, 1.0f);
     }
@@ -5031,42 +5094,42 @@ QPointer <Asset> Game::CreateAssetFromURL(const QString url_str)
 {
     //infer asset type from filename extension
     //60.0 - be sure to use just the filename only, as this filters out blah.txt?v=2311283 and so on
-    const QString t = MathUtil::AssetTypeFromFilename(QUrl(url_str).fileName());
+    const ElementType t = MathUtil::AssetTypeFromFilename(QUrl(url_str).fileName());
 //    qDebug() << "Game::CreateAssetFromURL" << url_str << AssetTypeToString(t);
 
     QPointer <Asset> new_asset;
-    if (t == "assetghost") {
-        new_asset = new AssetGhost();        
+    if (t == TYPE_ASSETGHOST) {
+        new_asset = new AssetGhost();
     }
-    else if (t == "assetimage") {
+    else if (t == TYPE_ASSETIMAGE) {
         new_asset = new AssetImage();
     }
-    else if (t == "assetobject") {
+    else if (t == TYPE_ASSETOBJECT) {
         new_asset = new AssetObject();
     }
-    else if (t == "assetrecording") {
+    else if (t == TYPE_ASSETRECORDING) {
         new_asset = new AssetRecording();
     }
-    else if (t == "assetscript") {
+    else if (t == TYPE_ASSETSCRIPT) {
         new_asset = new AssetScript(env->GetCurRoom());
     }
-    else if (t == "assetshader") {
+    else if (t == TYPE_ASSETSHADER) {
         new_asset = new AssetShader();
     }
-    else if (t == "assetsound") {
+    else if (t == TYPE_ASSETSOUND) {
         new_asset = new AssetSound();
     }
-    else if (t == "assetvideo") {
+    else if (t == TYPE_ASSETVIDEO) {
         new_asset = new AssetVideo();
     }
-    else if (t == "assetwebsurface") {
+    else if (t == TYPE_ASSETWEBSURFACE) {
         new_asset = (AbstractWebSurface*)new AssetWebSurface();
     }
 
     if (new_asset) {
-        if (QUrl(url_str).isLocalFile() && QUrl(player->GetS("url")).isLocalFile()) {
+        if (QUrl(url_str).isLocalFile() && QUrl(player->GetProperties()->GetURL()).isLocalFile()) {
             const QString file_path = QUrl(url_str).toLocalFile();
-            const QString base_path = QDir(QUrl(player->GetS("url")).toLocalFile()).path();
+            const QString base_path = QDir(QUrl(player->GetProperties()->GetURL()).toLocalFile()).path();
             const QDir dir = QFileInfo(base_path).absoluteDir();
             const QString src = dir.relativeFilePath(file_path);
             new_asset->SetSrc(QUrl::fromLocalFile(base_path).toString(), src);
@@ -5074,7 +5137,7 @@ QPointer <Asset> Game::CreateAssetFromURL(const QString url_str)
         else {
             new_asset->SetSrc(url_str, url_str);
         }
-        new_asset->SetS("id", url_str);
+        new_asset->GetProperties()->SetID(url_str);
     }
 
     return new_asset;
@@ -5088,19 +5151,19 @@ void Game::UpdateDragAndDropPosition(QPointer <RoomObject> o, const int cursor_i
 
     QMatrix4x4 xform;
 
-    if (o->GetType() == "object" && o->GetS("id") == "plane") {
+    if (o->GetType() == TYPE_OBJECT && o->GetProperties()->GetID() == "plane") {
         xform.setColumn(3, player->GetCursorPos(cursor_index) + player->GetCursorZDir(cursor_index) * 0.1f);
     }
     else {
         xform.setColumn(3, player->GetCursorPos(cursor_index));
     }
 
-    if (o->GetType() == "object" && o->GetS("id") != "plane") { //make objects upright
+    if (o->GetType() == TYPE_OBJECT && o->GetProperties()->GetID() != "plane") { //make objects upright
         xform.setColumn(0, player->GetCursorXDir(cursor_index));
         xform.setColumn(1, player->GetCursorZDir(cursor_index));
         xform.setColumn(2, -player->GetCursorYDir(cursor_index));
     }
-    else if (o->GetType() == "link") {
+    else if (o->GetType() == TYPE_LINK) {
         xform.setColumn(0, player->GetCursorXDir(cursor_index));
         xform.setColumn(1, QVector3D(0,1,0));
         xform.setColumn(2, QVector3D::crossProduct(player->GetCursorXDir(cursor_index), QVector3D(0,1,0)).normalized());
@@ -5114,11 +5177,11 @@ void Game::UpdateDragAndDropPosition(QPointer <RoomObject> o, const int cursor_i
     xform.setRow(3, QVector4D(0,0,0,1));
     xform *= dragdrop_xform;
 
-    o->SetV("pos", xform.column(3).toVector3D());
-    o->SetXDirs(xform.column(0).toVector3D(),
+    o->GetProperties()->SetPos(xform.column(3).toVector3D());
+    o->GetProperties()->SetXDirs(xform.column(0).toVector3D(),
                 xform.column(1).toVector3D(),
                 xform.column(2).toVector3D());
-    o->SetB("sync", true);
+    o->GetProperties()->SetSync(true);
 }
 
 void Game::DragAndDrop(const QString url_str, const QString drop_or_pin, const int i)
@@ -5126,7 +5189,7 @@ void Game::DragAndDrop(const QString url_str, const QString drop_or_pin, const i
 //    qDebug() << "Game::DragAndDrop" << url_str << drop_or_pin << i;
     QPointer <Room> r = env->GetCurRoom();
     //drag+drop
-    if (r->GetB("locked")) {
+    if (r->GetProperties()->GetLocked()) {
         MathUtil::ErrorLog("Warning: cannot do drag and drop, room.locked=true");
         return;
     }
@@ -5135,74 +5198,76 @@ void Game::DragAndDrop(const QString url_str, const QString drop_or_pin, const i
     QPointer <Asset> new_asset = CreateAssetFromURL(url_str);
 
     if (new_asset) {
-        asset_id = new_asset->GetS("id");
-        new_asset->SetB("sync", true);
+        asset_id = new_asset->GetProperties()->GetID();
+        new_asset->GetProperties()->SetSync(true);
     }
 
     ClearSelection(i);
 
     QPointer <RoomObject> new_object = new RoomObject();
-    new_object->SetS("js_id", GetGlobalUUID());
+    new_object->GetProperties()->SetJSID(GetGlobalUUID());
 
     //qDebug() << i << hit_result_rect << url_str;
     if (new_asset) {
-        const QString t = new_asset->GetS("_type");
-        if (t == "assetimage") {
+        const ElementType t = new_asset->GetProperties()->GetType();
+        if (t == TYPE_ASSETIMAGE) {
             r->AddAssetImage(dynamic_cast<AssetImage *>(new_asset.data()));
             dynamic_cast<AssetImage *>(new_asset.data())->Load();
-            new_object->SetType("object");
-            new_object->SetS("id", "plane");
-            new_object->SetS("collision_id", "plane");
-            new_object->SetS("image_id", asset_id);
-            new_object->SetS("cull_face", "none");
-            new_object->SetB("lighting", false);
-        }           
-        else if (t == "assetvideo") {
+            new_object->SetType(TYPE_OBJECT);
+            new_object->GetProperties()->SetID("plane");
+            new_object->GetProperties()->SetCollisionID("plane");
+            new_object->GetProperties()->SetImageID(asset_id);
+            new_object->GetProperties()->SetCullFace("none");
+            new_object->GetProperties()->SetLighting(false);
+        }
+        else if (t == TYPE_ASSETVIDEO) {
             r->AddAssetVideo(dynamic_cast<AssetVideo *>(new_asset.data()));
-            new_object->SetType("video");
-            new_object->SetS("id", asset_id);
-            new_object->SetS("cull_face", "none");
-            new_object->SetB("lighting", false);
+            new_object->SetAssetVideo(dynamic_cast<AssetVideo *>(new_asset.data()));
+            new_object->SetType(TYPE_VIDEO);
+            new_object->GetProperties()->SetID(asset_id);
+            new_object->GetProperties()->SetCullFace("none");
+            new_object->GetProperties()->SetLighting(false);
         }
-        else if (t == "assetsound") {
+        else if (t == TYPE_ASSETSOUND) {
             r->AddAssetSound(dynamic_cast<AssetSound *>(new_asset.data()));
-            new_object->SetType("sound");
-            new_object->SetS("id", asset_id);
+            new_object->SetAssetSound(dynamic_cast<AssetSound *>(new_asset.data()));
+            new_object->SetType(TYPE_SOUND);
+            new_object->GetProperties()->SetID(asset_id);
         }
-        else if (t == "assetobject") {
+        else if (t == TYPE_ASSETOBJECT) {
             r->AddAssetObject(dynamic_cast<AssetObject*>(new_asset.data()));
-            new_object->SetType("object");
-            new_object->SetS("id", asset_id);
-            new_object->SetS("collision_id", "cube");
+            new_object->SetType(TYPE_OBJECT);
+            new_object->GetProperties()->SetID(asset_id);
+            new_object->GetProperties()->SetCollisionID(asset_id);
             new_object->SetRescaleOnLoad(false); //rescale object to unit diam on load
         }
-        else if (t == "assetrecording") {
+        else if (t == TYPE_ASSETRECORDING) {
             r->AddAssetRecording(dynamic_cast<AssetRecording *>(new_asset.data()));
-            new_asset->SetB("auto_play", true);
+            new_asset->GetProperties()->SetAutoPlay(true);
         }
         else {
             //unknown, show it on a websurface
             r->AddAssetWebSurface(dynamic_cast<AbstractWebSurface*>(new_asset.data()));
-            new_object->SetType("object");
-            new_object->SetS("id", "plane");
-            new_object->SetS("collision_id", "plane");
-            new_object->SetS("websurface_id", url_str);
-            new_object->SetS("cull_face", "none");
-            new_object->SetB("lighting", false);
+            new_object->SetType(TYPE_OBJECT);
+            new_object->GetProperties()->SetID("plane");
+            new_object->GetProperties()->SetCollisionID("plane");
+            new_object->GetProperties()->SetWebsurfaceID(url_str);
+            new_object->GetProperties()->SetCullFace("none");
+            new_object->GetProperties()->SetLighting(false);
         }
 
         if (drop_or_pin == "Drag+Drop") {
-            new_object->SetB("collision_static", false);
+            new_object->GetProperties()->SetCollisionStatic(false);
         }
 
         selected[i] = r->AddRoomObject(new_object);
     }
     else {
         //unassociated with asset, do it as a portal
-        new_object->SetType("link");
+        new_object->SetType(TYPE_LINK);
         new_object->SetURL(url_str, url_str);
         r->AddRoomObject(new_object);
-        selected[i] = new_object->GetS("js_id");
+        selected[i] = new_object->GetProperties()->GetJSID();
     }
 
     UpdateDragAndDropPosition(new_object, i);
@@ -5216,7 +5281,7 @@ void Game::DragAndDrop(const QString url_str, const QString drop_or_pin, const i
     }
     else {
         mouse_move_accum = QPointF(0,0);
-        if (new_asset && new_asset->GetS("_type") == "assetrecording") {
+        if (new_asset && new_asset->GetProperties()->GetType() == TYPE_ASSETRECORDING) {
             state = JVR_STATE_DEFAULT;
         }
         else {
@@ -5230,11 +5295,11 @@ void Game::DragAndDrop(const QString url_str, const QString drop_or_pin, const i
         r->GetPhysics()->RemoveRigidBody(new_object);
         r->GetPhysics()->AddRigidBody(new_object, COL_WALL, COL_WALL);
 
-        new_object->Update(player->GetF("delta_time"));
+        new_object->Update(player->GetDeltaTime());
 
         websurface_selected[i] = new_object->GetAssetWebSurface();
         if (websurface_selected[i]) {
-            websurface_selected[i]->SetURL(websurface_selected[i]->GetS("src"));
+            websurface_selected[i]->SetURL(websurface_selected[i]->GetProperties()->GetSrc());
         }
         video_selected[i] = new_object->GetAssetVideo();
 
@@ -5242,14 +5307,14 @@ void Game::DragAndDrop(const QString url_str, const QString drop_or_pin, const i
         //qDebug() << websurface_selected[i]->GetFullURL();
     }
 
-    new_object->SetB("sync", true);
+    new_object->GetProperties()->SetSync(true);
 
     if (new_object->GetAssetSound()){
-        new_object->GetAssetSound()->SetSrc(url_str, url_str);
+        //new_object->GetAssetSound()->SetSrc(url_str, url_str);
         new_object->GetAssetSound()->Play(new_object->GetMediaContext());
     }
     if (new_object->GetAssetVideo()){
-        new_object->GetAssetVideo()->SetSrc(url_str, url_str);
+        //new_object->GetAssetVideo()->SetSrc(url_str, url_str);
         new_object->GetAssetVideo()->Play(new_object->GetMediaContext());
     }
 }
@@ -5262,13 +5327,13 @@ bool Game::GetRecording() const
 void Game::StartRecording(const bool record_everyone)
 {
     multi_players->SetRecording(true, record_everyone);
-    SoundManager::Play(SOUND_RECORDGHOST, false, player->GetV("pos"), 1.0f);
+    SoundManager::Play(SOUND_RECORDGHOST, false, player->GetProperties()->GetPos()->toQVector3D(), 1.0f);
 }
 
 void Game::StopRecording()
 {
     multi_players->SetRecording(false, true);
-    SoundManager::Play(SOUND_GHOSTSAVED, false, player->GetV("pos"), 1.0f);
+    SoundManager::Play(SOUND_GHOSTSAVED, false, player->GetProperties()->GetPos()->toQVector3D(), 1.0f);
 }
 
 void Game::DragAndDropFromWebsurface(const QString drop_or_pin, const int i)
@@ -5276,7 +5341,7 @@ void Game::DragAndDropFromWebsurface(const QString drop_or_pin, const int i)
 //    QHash <QString, QPointer <RoomObject> > & envobjects = env->GetPlayerRoom()->GetEnvObjects();
     QPointer <Room> r = env->GetCurRoom();
     //drag+drop
-    const bool is_room_locked = r->GetB("locked");
+    const bool is_room_locked = r->GetProperties()->GetLocked();
     const bool is_websurface_not_null = !websurface_selected[i].isNull();
 
     if (!is_room_locked && is_websurface_not_null) {
@@ -5304,12 +5369,12 @@ void Game::SetRoomDeleteCode(const QString s)
 
 void Game::SetUserID(const QString s)
 {
-    player->SetS("userid", s);
+    player->GetProperties()->SetUserID(s);
 
     if (!multi_players.isNull() && !env.isNull()) {
         QPointer <RoomObject> user_ghost = multi_players->GetPlayer();
         if (user_ghost) {
-            user_ghost->SetS("id", s);
+            user_ghost->GetProperties()->SetID(s);
 
             multi_players->DoUpdateAvatar();
 
@@ -5336,7 +5401,7 @@ void Game::ResetAvatar()
 void Game::SendChatMessage(const QString s)
 {
     if (multi_players->SetChatMessage(player, s) && SoundManager::GetEnabled()) { //53.8 - spyduck doesn't like noise for commands
-        SoundManager::Play(SOUND_POP2, false, player->GetV("pos")+QVector3D(0,1,0), 1.0f);
+        SoundManager::Play(SOUND_POP2, false, player->GetProperties()->GetPos()->toQVector3D()+QVector3D(0,1,0), 1.0f);
     }
 
     //59.6 - restore #sync functionality
@@ -5347,10 +5412,10 @@ void Game::SendChatMessage(const QString s)
 
 void Game::UpdateAssetRecordings()
 {
-    QPointer <Room> r = env->GetCurRoom();    
+    QPointer <Room> r = env->GetCurRoom();
     for (QPointer <AssetRecording> & a : r->GetAssetRecordings()) {
         if (a && a->GetRoomID().isEmpty()) {
-            const QString s = MathUtil::MD5Hash(r->GetS("url"));
+            const QString s = MathUtil::MD5Hash(r->GetProperties()->GetURL());
             a->SetRoomID(s);
             multi_players->AddAssetRecording(a);
         }
@@ -5395,218 +5460,7 @@ void Game::SetPinching(const bool b)
 {
     pinching = b;
 }
-#endif
-
-void Game::UpdateMenuObject()
-{
-    QPointer <Room> r = env->GetCurRoom();
-
-    //update playerlist for menu
-    menu_ops.playerlist.clear();
-
-    //first add the user
-    QJsonObject my_pos;
-    my_pos["x"] = player->GetV("pos").x();
-    my_pos["y"] = player->GetV("pos").y();
-    my_pos["z"] = player->GetV("pos").z();
-    QJsonObject my_x;
-    my_x["x"] = player->GetRightDir().x();
-    my_x["y"] = player->GetRightDir().y();
-    my_x["z"] = player->GetRightDir().z();
-    QJsonObject my_y;
-    my_y["x"] = player->GetV("up_dir").x();
-    my_y["y"] = player->GetV("up_dir").y();
-    my_y["z"] = player->GetV("up_dir").z();
-    QJsonObject my_z;
-    my_z["x"] = player->GetV("view_dir").x();
-    my_z["y"] = player->GetV("view_dir").y();
-    my_z["z"] = player->GetV("view_dir").z();
-    QJsonObject my_o;
-    my_o["userid"] = player->GetS("userid");
-    my_o["pos"] = my_pos;
-    my_o["xdir"] = my_x;
-    my_o["ydir"] = my_y;
-    my_o["zdir"] = my_z;
-    menu_ops.playerlist.push_back(QJsonDocument(my_o).toVariant());
-
-    //then add multiplayers
-    QList <QPointer <RoomObject> > players = multi_players->GetPlayersInRoom(r->GetS("url"));
-    for (int i=0; i<players.size(); ++i) {
-        QJsonObject pos;
-        pos["x"] = players[i]->GetPos().x();
-        pos["y"] = players[i]->GetPos().y();
-        pos["z"] = players[i]->GetPos().z();
-
-        QJsonObject xdir;
-        xdir["x"] = players[i]->GetXDir().x();
-        xdir["y"] = players[i]->GetXDir().y();
-        xdir["z"] = players[i]->GetXDir().z();
-
-        QJsonObject ydir;
-        ydir["x"] = players[i]->GetYDir().x();
-        ydir["y"] = players[i]->GetYDir().y();
-        ydir["z"] = players[i]->GetYDir().z();
-
-        QJsonObject zdir;
-        zdir["x"] = players[i]->GetZDir().x();
-        zdir["y"] = players[i]->GetZDir().y();
-        zdir["z"] = players[i]->GetZDir().z();
-
-        QJsonObject o;
-        o["userid"] = players[i]->GetS("id");
-        o["pos"] = pos;
-        o["xdir"] = xdir;
-        o["ydir"] = ydir;
-        o["zdir"] = zdir;
-
-        menu_ops.playerlist.push_back(QJsonDocument(o).toVariant());
-    }
-    menu_ops.near_dist = r->GetF("near_dist");
-
-    menu_ops.bookmarks = bookmarks->GetBookmarks();
-    menu_ops.workspaces = bookmarks->GetWorkspaces();
-    menu_ops.playbackdevices = SoundManager::GetDevices(ALC_DEVICE_SPECIFIER);
-    menu_ops.capturedevices = SoundManager::GetDevices(ALC_CAPTURE_DEVICE_SPECIFIER);
-    menu_ops.playercount = multi_players->GetNumberUsersURL(player->GetS("url"));
-
-    int netstat = 0;
-    if (multi_players->GetEnabled()) {
-        QList <ServerConnection> & conn_list = multi_players->GetConnectionList();
-        for (int i=0; i<conn_list.size(); ++i) {
-            ServerConnection & s = conn_list[i];
-            for (int j=0; j<s.rooms.size(); ++j) {
-                if (QString::compare(s.rooms[j].url, player->GetS("url")) == 0) {
-                    if (s.logged_in) {
-                        netstat = 2;
-                        menu_ops.networkerror = "";
-                    }
-                    else if (s.last_error_msg.length() > 0) {
-                        netstat = -1;
-                        menu_ops.networkerror = s.last_error_msg;
-                    }
-                    else if (s.logging_in) {
-                        netstat = 1;
-                        menu_ops.networkerror = "";
-                    }
-                    else {
-                        netstat = 0;
-                    }
-                    menu_ops.roomserver = s.tcpserver;
-                    break;
-                }
-            }
-        }
-    }
-//    menu.UpdateChatMessages();
-    menu_ops.networkstatus = netstat;
-    menu_ops.player_curroom = r;
-    if (!selected[0].isEmpty()) {
-        menu_ops.selected = selected[0];
-    }
-    else {
-        menu_ops.selected = selected[1];
-    }
-    menu_ops.env = env;
-    menu_ops.player = player;
-    menu_ops.multi_players = multi_players;
-
-    if (menu_ops.do_navback) {
-        StartResetPlayer();
-        menu_ops.do_navback = false;
-    }
-    if (menu_ops.do_navforward) {
-        StartResetPlayerForward();
-        menu_ops.do_navforward = false;
-    }
-    if (menu_ops.do_navhome) {
-        StartEscapeToPocketspace();
-        menu_ops.do_navhome = false;
-    }
-    if (menu_ops.do_launchurl) {
-        menu_ops.do_launchurl = false;
-        QString url_str = menu_ops.do_launchurl_url.trimmed();
-
-        if (url_str == "home") {
-            url_str = SettingsManager::GetLaunchURL();
-        }
-
-        if (QString::compare(url_str.mid(1,2), ":\\") == 0) { //convert Windows absolute paths
-            url_str = "file:///" + url_str;
-            url_str.replace("\\", "/"); //replace backslashes with forward slashes
-        }
-        else {
-            QDir d(url_str);
-            QFile f(url_str);
-            if (f.exists() || d.exists()) {
-                url_str = QUrl::fromLocalFile(url_str).toString();
-            }
-        }
-
-        //we always load the portal locally
-        if (menu_ops.do_launchurl_useportal) {
-            CreatePortal(url_str, false);
-        }
-        else {                        
-            QPointer <RoomObject> p = CreatePortal(url_str, false);
-            if (p) {
-                p->SetB("visible", false);
-                p->SetB("open", true);
-                teleport_portal = p;
-                StartTeleportPlayer();
-            }
-        }
-    }
-    if (menu_ops.do_chatsend) {
-        menu_ops.do_chatsend = false;
-        SendChatMessage(menu_ops.do_chatsend_msg);
-    }
-    if (menu_ops.do_sync) {
-        menu_ops.do_sync = false;
-        r->SyncAll();
-    }
-    if (menu_ops.do_quit) {
-        menu_ops.do_quit = false;
-        SetDoExit(true);
-    }
-    if (menu_ops.do_saveroom) {
-        menu_ops.do_saveroom = false;
-        SaveRoom(r->GetSaveFilename());
-    }
-    if (menu_ops.do_saveworkspace) {
-        menu_ops.do_saveworkspace = false;
-        CreateNewWorkspace(MathUtil::GetWorkspacePath() + "/" + menu_ops.do_saveworkspacename);
-    }
-
-    //update the pocketspace so surfaces have the window.janus object
-    QPointer <Room> pocketspace_room = env->GetRootRoom();
-    if (pocketspace_room && (r == pocketspace_room || r->GetS("url") == pocketspace_room->GetS("url"))) {
-        QHash <QString, QPointer <RoomObject> > & envobjects = r->GetRoomObjects();
-        for (QPointer <RoomObject> & o : envobjects) {
-            if (o && o->GetAssetWebSurface() && o->GetAssetWebSurface()->GetB("_save_to_markup")) {
-                menu_ops.UpdatePageWithJanusObject(o->GetAssetWebSurface());
-            }
-        }
-    }
-
-    multi_players->SetEnabled(SettingsManager::GetMultiplayerEnabled() && !do_exit);
-    multi_players->SetSessionTrackingEnabled(SettingsManager::GetSessionTrackingEnabled());
-    multi_players->SetPartyMode(SettingsManager::GetPartyModeEnabled());
-
-    WebAsset::SetUseCache(SettingsManager::GetCacheEnabled());
-}
-
-void Game::UpdateMedia()
-{
-    UpdateAudio();
-    if  (env && env->GetCurRoom())
-    {
-        QList <QPointer <Room> > visible_rooms = env->GetCurRoom()->GetVisibleRooms();
-        for  (int i=0; i<visible_rooms.size(); ++i) {
-            QPointer <Room> r = visible_rooms[i];
-            r->UpdateMedia(multi_players);
-        }
-    }
-}
+#endif  
 
 void Game::UpdateAudio()
 {
@@ -5624,30 +5478,34 @@ void Game::UpdateAudio()
 
     //update threshold-based speaking
     if (SoundManager::GetCaptureDeviceEnabled() && SettingsManager::GetMicAlwaysOn()) {
-        if (SoundManager::GetThresholdPast() && !player->GetB("speaking")) {
+        if (SoundManager::GetThresholdPast() && !player->GetSpeaking()) {
             //start if over threhsold and we are not speaking
-            player->SetB("speaking", true);
+            player->SetSpeaking(true);
         }
-        else if (!SoundManager::GetThresholdPast() && player->GetB("speaking")) {
+        else if (!SoundManager::GetThresholdPast() && player->GetSpeaking()) {
             //stop if under threshold and we are speaking (and for over 500 msec)
-            player->SetB("speaking", false);
+            player->SetSpeaking(false);
         }
     }
 }
 
 void Game::UpdateMultiplayer()
 {
+    multi_players->SetEnabled(SettingsManager::GetMultiplayerEnabled() && !do_exit);
+    multi_players->SetSessionTrackingEnabled(SettingsManager::GetSessionTrackingEnabled());
+    multi_players->SetPartyMode(SettingsManager::GetPartyModeEnabled());
+
     QPointer <Room> r = env->GetCurRoom();
     if (r && multi_players) {
         //determine URL adjacency
-        const QString room_url = r->GetS("url");
-        const QString room_name = r->GetS("title");
-        const bool room_allows_party_mode = r->GetB("party_mode");
+        const QString room_url = r->GetProperties()->GetURL();
+        const QString room_name = r->GetProperties()->GetTitle();
+        const bool room_allows_party_mode = r->GetProperties()->GetPartyMode();
         QList <QString> adjacent_urls;
         QList <QPointer <Room> > visible_rooms = r->GetVisibleRooms();
         for (QPointer <Room> & r2 : visible_rooms) {
             if (r2 && r2 != r) {
-                adjacent_urls.push_back(r2->GetS("id"));
+                adjacent_urls.push_back(r2->GetProperties()->GetID());
             }
         }
 
@@ -5658,10 +5516,10 @@ void Game::UpdateMultiplayer()
             room_url_no_anchor = room_url_no_anchor.left(room_url_no_anchor.indexOf("#"));
         }
 
-        multi_players->Update(player, room_url_no_anchor, adjacent_urls, room_name, room_allows_party_mode);
+        multi_players->Update(player, room_url_no_anchor, adjacent_urls, room_name, room_allows_party_mode, delta_time);
         QPointer <RoomObject> g = multi_players->GetPlayer();
         if (g) {
-            g->Update(player->GetF("delta_time"));
+            g->Update(delta_time);
         }
 
         //any reset to make?
@@ -5674,30 +5532,14 @@ void Game::UpdateMultiplayer()
                 multi_players->SetResetPlayer(false);
             }
         }
-    }
+    }   
 }
 
 void Game::UpdateAssets()
 {
     env->UpdateAssets();
-
-    if (virtualkeyboard) {
-        virtualkeyboard->Update();
-    }
-
     SpinAnimation::UpdateAssets();
-
-    RoomObject::UpdateAssets();
-
-    for (int i=0; i<private_websurfaces.size(); ++i) {
-        if (private_websurfaces[i].asset) {
-            private_websurfaces[i].asset->UpdateGL();
-        }
-        if (private_websurfaces[i].plane_obj) {
-            private_websurfaces[i].plane_obj->Update();
-            private_websurfaces[i].plane_obj->UpdateGL();
-        }
-    }
+    RoomObject::UpdateAssets();   
 }
 
 #ifdef __ANDROID__

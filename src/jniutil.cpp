@@ -13,7 +13,7 @@ jmethodID JNIUtil::m_hideSplashMID = NULL;
 jmethodID JNIUtil::m_setVRModeEnabledMID = NULL;
 jmethodID JNIUtil::m_setProgressBarMID = NULL;
 
-jmethodID JNIUtil::m_setUseGeckoWebViewMID = NULL;
+jmethodID JNIUtil::m_getCookieMID = NULL;
 jmethodID JNIUtil::m_createNewWebViewMID = NULL;
 jmethodID JNIUtil::m_removeWebViewMID = NULL;
 jmethodID JNIUtil::m_attachWebViewToMainLayoutMID = NULL;
@@ -40,6 +40,8 @@ jmethodID JNIUtil::m_setUpdatesEnabledWebViewMID = NULL;
 jmethodID JNIUtil::m_mousePressWebViewMID = NULL;
 jmethodID JNIUtil::m_mouseMoveWebViewMID = NULL;
 jmethodID JNIUtil::m_mouseReleaseWebViewMID = NULL;
+jmethodID JNIUtil::m_keyPressWebViewMID = NULL;
+jmethodID JNIUtil::m_keyReleaseWebViewMID = NULL;
 jmethodID JNIUtil::m_getRepaintRequestedAtWebViewMID = NULL;
 jmethodID JNIUtil::m_getScrollRequestedAtWebViewMID = NULL;
 jmethodID JNIUtil::m_getURLChangedAtWebViewMID = NULL;
@@ -47,6 +49,7 @@ jmethodID JNIUtil::m_getURLChangedAtWebViewMID = NULL;
 jmethodID JNIUtil::m_getScreenOrientationMID = NULL;
 jmethodID JNIUtil::m_setButtonMarginMID = NULL;
 jmethodID JNIUtil::m_setControlsVisibleMID = NULL;
+jmethodID JNIUtil::m_hideKeyboardMID = NULL;
 jmethodID JNIUtil::m_getWalkJoystickXMID = NULL;
 jmethodID JNIUtil::m_getWalkJoystickYMID = NULL;
 jmethodID JNIUtil::m_getViewJoystickXMID = NULL;
@@ -142,7 +145,7 @@ void JNIUtil::Initialize()
          */
 
         //Webview
-        m_setUseGeckoWebViewMID = jniEnv->GetMethodID(cls, "setUseGeckoWebView", "(Z)V");
+        m_getCookieMID = jniEnv->GetMethodID(cls, "getCookie", "()Ljava/lang/String;");
         m_createNewWebViewMID = jniEnv->GetMethodID(cls, "createNewWebView", "(I)V");
         m_removeWebViewMID = jniEnv->GetMethodID(cls, "removeWebView", "(I)V");
         m_attachWebViewToMainLayoutMID = jniEnv->GetMethodID(cls, "attachWebViewToMainLayout", "(I)V");
@@ -169,6 +172,8 @@ void JNIUtil::Initialize()
         m_mousePressWebViewMID = jniEnv->GetMethodID(cls, "mousePressWebView", "(III)V");
         m_mouseMoveWebViewMID = jniEnv->GetMethodID(cls, "mouseMoveWebView", "(III)V");
         m_mouseReleaseWebViewMID = jniEnv->GetMethodID(cls, "mouseReleaseWebView", "(III)V");
+        m_keyPressWebViewMID = jniEnv->GetMethodID(cls, "keyPressWebView", "(III)V");
+        m_keyReleaseWebViewMID = jniEnv->GetMethodID(cls, "keyReleaseWebView", "(III)V");
         m_getRepaintRequestedAtWebViewMID = jniEnv->GetMethodID(cls, "getRepaintRequestedAtWebView", "(I)Z");
         m_getScrollRequestedAtWebViewMID = jniEnv->GetMethodID(cls, "getScrollRequestedAtWebView", "(I)Z");
         m_getURLChangedAtWebViewMID = jniEnv->GetMethodID(cls, "getURLChangedAtWebView", "(I)Z");
@@ -185,6 +190,7 @@ void JNIUtil::Initialize()
         m_getScreenOrientationMID = jniEnv->GetMethodID(cls, "getScreenOrientation", "()I");
         m_setButtonMarginMID = jniEnv->GetMethodID(cls, "setButtonMargin", "(I)V");
         m_setControlsVisibleMID = jniEnv->GetMethodID(cls, "setControlsVisible", "(ZZ)V");
+        m_hideKeyboardMID = jniEnv->GetMethodID(cls, "hideKeyboard", "()V");
         m_getWalkJoystickXMID = jniEnv->GetMethodID(cls, "getWalkJoystickX", "()F");
         m_getWalkJoystickYMID = jniEnv->GetMethodID(cls, "getWalkJoystickY", "()F");
         m_getViewJoystickXMID = jniEnv->GetMethodID(cls, "getViewJoystickX", "()F");
@@ -230,11 +236,6 @@ void JNIUtil::Initialize()
         m_getButtonStartMID = jniEnv->GetMethodID(cls, "getButtonStart", "()Z");
         m_getButtonBackMID = jniEnv->GetMethodID(cls, "getButtonBack", "()Z");
     }
-
-#ifdef __arm__
-    //JNIUtil::SetUseGeckoWebView(true);
-#endif
-
 }
 
 void JNIUtil::Destroy()
@@ -310,12 +311,31 @@ void JNIUtil::SetProgressBar(int i)
     }
 }
 
-void JNIUtil::SetUseGeckoWebView(bool b)
+void JNIUtil::UpdateCookies()
 {
-    if(m_setUseGeckoWebViewMID)
-    {
+    if (m_getCookieMID){
         QAndroidJniEnvironment jniEnv;
-        jniEnv->CallVoidMethod(m_objectRef, m_setUseGeckoWebViewMID, b);
+        jstring cookie_jstring = (jstring) jniEnv->CallObjectMethod(m_objectRef, m_getCookieMID);
+        QString s = QString(jniEnv->GetStringUTFChars(cookie_jstring, 0));
+        if (s != "") {
+            //qDebug() << "updating janus-cookie" << s;
+            QByteArray ba = s.toLatin1();
+            QList<QNetworkCookie> cookies = QNetworkCookie::parseCookies(ba);
+
+            for (QList<QNetworkCookie>::iterator it=cookies.begin(); it!=cookies.end(); ++it) {
+                //qDebug() << "jni-janus-cookies" << it->domain() << it->name() << it->value();
+
+                QString domainStr = it->domain();
+                if (!domainStr.isEmpty() && domainStr.at(0) == '.') {
+                    domainStr.remove(0,1);
+                }
+                domainStr = QString("http://") + domainStr;
+
+                CookieJar::cookie_jar->setCookiesFromUrl(QList<QNetworkCookie>({*it}), domainStr);
+            }
+            CookieJar::cookie_jar->SaveToDisk();
+        }
+        jniEnv->DeleteLocalRef(cookie_jstring);
     }
 }
 
@@ -476,10 +496,15 @@ WebHitTestResult JNIUtil::GetHitTestContentWebView(int tag)
     if (m_getHitTestContentMID){
         QAndroidJniEnvironment jniEnv;
         jstring url_jstring = (jstring) jniEnv->CallObjectMethod(m_objectRef, m_getHitTestContentMID, tag);
-        h.link_url = QUrl(QString(jniEnv->GetStringUTFChars(url_jstring, 0)));
+        QString url_string = QString(jniEnv->GetStringUTFChars(url_jstring, 0));
+        if (url_string == "janus://content_editable") {
+            h.editable = true;
+        }
+        else {
+            h.link_url = QUrl(url_string);
+        }
         jniEnv->DeleteLocalRef(url_jstring);
         //TODO: add content editable
-        //h.editable = qh.isContentEditable();
         //h.selected = qh.isContentSelected();
         h.bounding_rect = QRect();
         h.is_null = false;
@@ -596,6 +621,22 @@ void JNIUtil::MouseReleaseWebView(int tag, int x, int y)
     }
 }
 
+void JNIUtil::KeyPressWebView(int tag, int code, int state)
+{
+    if (m_keyPressWebViewMID){
+        QAndroidJniEnvironment jniEnv;
+        jniEnv->CallVoidMethod(m_objectRef, m_keyPressWebViewMID, tag, code, state);
+    }
+}
+
+void JNIUtil::KeyReleaseWebView(int tag, int code, int state)
+{
+    if (m_keyReleaseWebViewMID){
+        QAndroidJniEnvironment jniEnv;
+        jniEnv->CallVoidMethod(m_objectRef, m_keyReleaseWebViewMID, tag, code, state);
+    }
+}
+
 bool JNIUtil::GetRepaintRequestedAtWebView(int tag)
 {
     QAndroidJniEnvironment jniEnv;
@@ -639,6 +680,15 @@ void JNIUtil::SetControlsVisible(bool b, bool show_view_joystick)
     {
         QAndroidJniEnvironment jniEnv;
         jniEnv->CallVoidMethod(m_objectRef, m_setControlsVisibleMID, (jboolean) b, (jboolean) show_view_joystick);
+    }
+}
+
+void JNIUtil::HideKeyboard()
+{
+    if(m_hideKeyboardMID)
+    {
+        QAndroidJniEnvironment jniEnv;
+        jniEnv->CallVoidMethod(m_objectRef, m_hideKeyboardMID);
     }
 }
 

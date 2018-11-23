@@ -27,7 +27,7 @@ AssetImage::AssetImage() :
     max_img_resolution(1024),    
     next_frame_time(-1)
 {
-    SetS("_type", "assetimage");
+    props->SetType(TYPE_ASSETIMAGE);
 
     InitializeImporters();
     Unload();   
@@ -215,7 +215,7 @@ void AssetImage::CreateFromText(const QString & s, const float font_size, const 
     //painter.setFont(font);
     //painter.drawText(dim_rect, int(Qt::AlignLeft | Qt::AlignTop | Qt::TextWordWrap), text, &text_bounding_rect);
     if (error_background) {
-        QImage error_img(QDir::currentPath() + "/assets/error.png");
+        QImage error_img(MathUtil::GetApplicationPath() + "/assets/error.png");
         painter.drawImage(QRect(0, 0, tex_width, tex_height), error_img);
     }
     text_doc.drawContents(&painter, QRectF(0, 0, tex_width, tex_width));
@@ -229,6 +229,7 @@ void AssetImage::CreateFromText(const QString & s, const float font_size, const 
     toRender = toRender.convertToFormat(QImage::Format_RGBA8888_Premultiplied);
 #endif
 
+    SetStarted(true);
     SetLoaded(true);
     SetProcessing(true);
     SetFinished(false);
@@ -254,11 +255,20 @@ void AssetImage::CreateFromText(const QString & s, const float font_size, const 
 void AssetImage::Load()
 {    
 //    qDebug() << "AssetImage::Load()" << src_url;
-    if (GetS("src").left(5) == "data:") {
-        WebAsset::Load(QUrl(GetS("src")));
+    if (props->GetSrc().left(5) == "data:") {
+        WebAsset::Load(QUrl(props->GetSrc()));
     }
     else {
-        WebAsset::Load(QUrl(GetS("_src_url")));
+        if (props->GetSrcURL().isEmpty()) {
+            qDebug() << "AssetImage::Load() ERROR: Tried to load with an empty url" << props->GetID() << props->GetSrc();
+            SetLoaded(true);
+            SetProcessed(true);
+            SetFinished(true);
+            this->SetStatusCode(404);
+        }
+        else {
+            WebAsset::Load(QUrl(props->GetSrcURL()));
+        }
     }
 }
 
@@ -395,7 +405,7 @@ void AssetImage::DrawSelectedGL(QPointer <AssetShader> shader)
 
 bool AssetImage::GetIsStereoImage()
 {
-     return (GetB("sbs3d") || GetB("ou3d"));
+     return (props->GetSBS3D() || props->GetOU3D());
 }
 
 // this should be pretty much equal to assetobject::DrawGL
@@ -442,6 +452,10 @@ void AssetImage::DrawImageGL(QPointer <AssetShader> shader, const bool left_eye)
 
 bool AssetImage::UpdateGL()
 {    
+    if (!SettingsManager::GetAssetImagesEnabled()) {
+        return false;
+    }
+
     if (GetLoaded() && !GetProcessing()) {
 //        qDebug() << "AssetImage::UpdateGL() starting thread" << src_url;
         SetProcessing(true);
@@ -532,6 +546,10 @@ bool AssetImage::GetIsHDR()
 
 void AssetImage::LoadImageDataThread()
 {
+    if (GetProcessed()) {        
+        return;
+    }
+
 //    qDebug() << "AssetImage::LoadImageDataThread() started" << src_url;
     QString web_asset_url = GetURL().toString();
     QString extension = web_asset_url.right(web_asset_url.size() - (web_asset_url.lastIndexOf(".") +1));
@@ -541,7 +559,7 @@ void AssetImage::LoadImageDataThread()
     SetProcessed(true);
 
     if (textureData.isNull())
-    {
+    {        
         return; //56.0 - we will load with gli instead (don't clear the webasset data)
     }
     ClearData();
@@ -565,14 +583,14 @@ void AssetImage::LoadTextures()
     }
     else if (!GetFinished() && !GetError() && load_gli) {
         // temporary path for loading gli textures
-        const bool tex_linear = props->GetB("tex_linear");
-        const bool tex_mipmap = props->GetB("tex_mipmap");
-        const bool tex_clamp = props->GetB("tex_clamp");
+        const bool tex_linear = props->GetTexLinear();
+        const bool tex_mipmap = props->GetTexMipmap();
+        const bool tex_clamp = props->GetTexClamp();
         TextureHandle::ALPHA_TYPE tex_alpha = TextureHandle::ALPHA_TYPE::UNDEFINED;
-        QString const tex_alpha_string = props->GetS("tex_alpha");
+        QString const tex_alpha_string = props->GetTexAlpha();
 
         TextureHandle::COLOR_SPACE tex_colorspace = TextureHandle::COLOR_SPACE::SRGB;
-        QString const tex_colorspace_string = props->GetS("tex_colorspace");
+        QString const tex_colorspace_string = props->GetTexColorspace();
 
         if (tex_colorspace_string.contains("sRGB")) {
             tex_colorspace = TextureHandle::COLOR_SPACE::SRGB;

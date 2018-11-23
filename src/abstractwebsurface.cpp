@@ -2,7 +2,7 @@
 
 AbstractWebSurface::AbstractWebSurface()
 {
-    SetS("_type", "assetwebsurface");
+    props->SetType(TYPE_ASSETWEBSURFACE);
 }
 
 AbstractWebSurface::~AbstractWebSurface()

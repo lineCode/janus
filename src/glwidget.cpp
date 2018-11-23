@@ -10,7 +10,6 @@ GLWidget::GLWidget()
     counted_frames = 0;
     fps = 0;
     framerate_time.start();
-    deltat_time.start();
 
     take_screenshot = false;
     take_screenshot_cubemap = false;
@@ -116,6 +115,7 @@ void GLWidget::SetGrab(const bool b)
     grabbed = b;
 
     if (b) {
+        QCursor::setPos(GetWinCentre());
 #ifdef WIN32
         if (QApplication::overrideCursor() == 0) {
             QApplication::setOverrideCursor(Qt::BlankCursor);
@@ -147,10 +147,10 @@ void GLWidget::SetGrab(const bool b)
         releaseMouse();
         setMouseTracking(false);
         clearFocus();
-        game->GetPlayer()->SetB("walk_back", false);
-        game->GetPlayer()->SetB("walk_forward", false);
-        game->GetPlayer()->SetB("walk_left", false);
-        game->GetPlayer()->SetB("walk_right", false);
+        game->GetPlayer()->SetWalkBack(false);
+        game->GetPlayer()->SetWalkForward(false);
+        game->GetPlayer()->SetWalkLeft(false);
+        game->GetPlayer()->SetWalkRight(false);
     }
 }
 
@@ -211,9 +211,9 @@ void GLWidget::PinchTriggered(QPinchGesture *gesture)
     //qDebug() << "pinching" << gesture->totalScaleFactor() << gesture->state();
     if (gesture->state() == Qt::GestureFinished || gesture->state() == Qt::GestureCanceled)
     {
-        game->GetPlayer()->SetB("walk_forward", false);
-        game->GetPlayer()->SetB("walk_back", false);
-        game->GetPlayer()->SetB("running", false);
+        game->GetPlayer()->SetWalkForward(false);
+        game->GetPlayer()->SetWalkBack(false);
+        game->GetPlayer()->SetRunning(false);
 
         QMouseEvent * e = new QMouseEvent(QEvent::MouseButtonRelease, mouse_pos, Qt::LeftButton, Qt::NoButton, Qt::NoModifier);
         game->mouseReleaseEvent(e, 0);
@@ -229,21 +229,21 @@ void GLWidget::PinchTriggered(QPinchGesture *gesture)
         game->SetPinching(true);
         if (scale < 0.8)
         {
-            if (scale < 0.5) game->GetPlayer()->SetB("running", true);
-            game->GetPlayer()->SetB("walk_forward", false);
-            game->GetPlayer()->SetB("walk_back", true);
+            if (scale < 0.5) game->GetPlayer()->SetRunning(true);
+            game->GetPlayer()->SetWalkForward(false);
+            game->GetPlayer()->SetWalkBack(true);
         }
         else if (scale > 1.2)
         {
-            if (scale > 2) game->GetPlayer()->SetB("running", true);
-            game->GetPlayer()->SetB("walk_forward", true);
-            game->GetPlayer()->SetB("walk_back", false);
+            if (scale > 2) game->GetPlayer()->SetRunning(true);
+            game->GetPlayer()->SetWalkForward(true);
+            game->GetPlayer()->SetWalkBack(false);
         }
         else if (scale <= 1.2 && scale >= 0.8)
         {
             //game->GetPlayer()->SetRunning(false);
-            game->GetPlayer()->SetB("walk_forward", false);
-            game->GetPlayer()->SetB("walk_back", false);
+            game->GetPlayer()->SetWalkForward(false);
+            game->GetPlayer()->SetWalkBack(false);
         }
 
         if (gesture->state() == Qt::GestureStarted)
@@ -637,15 +637,14 @@ void GLWidget::paintGL()
         return;
     }
 
-    //int64_t t1 = JNIUtil::GetTimestampNsec();
-    game->SetDrawCursor(this->hasFocus());
-
-    //delta_t processing
-    double delta_t = 0.0;
-    if (deltat_time.elapsed() > 0) {
-        delta_t = double(deltat_time.restart()) / 1000.0;
+    bool make_virtual_menu_visible = game->GetVirtualMenu()->GetVisible();
+    if (game->GetVirtualMenu()->GetDoBookmarkAdd() || game->GetVirtualMenu()->GetDoBookmarkRemove()) {
+        DoBookmark();
+        game->GetVirtualMenu()->SetTakingScreenshot(true);
     }
-    game->GetPlayer()->SetF("delta_time", delta_t);
+
+    //int64_t t1 = JNIUtil::GetTimestampNsec();
+    game->SetDrawCursor(this->hasFocus());   
     game->Update();
 
     //60.0 - note, get curroom AFTER call to update (crossportals can change it!)
@@ -687,10 +686,10 @@ void GLWidget::paintGL()
 
     //calibrate player for first time (if needed)
     if (hmd_manager && hmd_manager->GetEnabled() &&
-            !game->GetPlayer()->GetB("hmd_calibrated") &&
+            !game->GetPlayer()->GetHMDCalibrated() &&
             (game->GetPlayer()->GetWalking())) {
         hmd_manager->ReCentre();
-        game->GetPlayer()->SetB("hmd_calibrated", true);
+        game->GetPlayer()->SetHMDCalibrated(true);
     }
 
     //for screenshots, we do
@@ -1072,7 +1071,11 @@ void GLWidget::paintGL()
         const int fbo_h = RendererInterface::m_pimpl->GetWindowHeight();
 
         QVector<GLfloat> m_viewPortArray;
+#ifdef __ANDROID__
+        m_viewPortArray.reserve(4);
+#else
         m_viewPortArray.reserve(8);
+#endif
 
         m_viewPortArray.push_back(0.0f);
         m_viewPortArray.push_back(0.0f);
@@ -1214,7 +1217,7 @@ void GLWidget::paintGL()
         cameras.clear();
         cameras.reserve(7);
 
-        std::vector<QVector4D> viewports;
+        QVector<QVector4D> viewports;
         viewports.reserve(6);
         // This is a 3x2 grid layout to use all of the available framebuffer space
         viewports.push_back(QVector4D(cube_face_dim * 0.0f, cube_face_dim * 0.0f, cube_face_dim, cube_face_dim)); // X+
@@ -1312,6 +1315,7 @@ void GLWidget::paintGL()
     case MODE_2D:
     default:
     {        
+#if !(defined(OCULUS_SUBMISSION_BUILD) && defined(ANDROID))
         // Make sure we have no FBO bound here, so that the render-thread won't have texture binding issues
         // when it tries to copy it's resulting texture to our FBO color layer.
         RendererInterface::m_pimpl->BindFBOToDraw(FBO_TEXTURE_BITFIELD::NONE);
@@ -1380,6 +1384,7 @@ void GLWidget::paintGL()
         MathUtil::glFuncs->glBlitFramebuffer(0,    0, 1280, 720,
                                              0,    0, width(), height(), GL_COLOR_BUFFER_BIT, GL_NEAREST);
 #endif
+#endif
 
         break;
     }
@@ -1408,6 +1413,10 @@ void GLWidget::paintGL()
         MathUtil::glFuncs->glFlush();
         game->SaveBookmark();
         take_bookmark = false;
+        if (game->GetVirtualMenu()->GetVisible()) {
+            game->GetVirtualMenu()->SetTakingScreenshot(false);
+            game->GetVirtualMenu()->ConstructSubmenus();
+        }
     }   
 
     /*int64_t t10 = JNIUtil::GetTimestampNsec();

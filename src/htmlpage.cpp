@@ -11,10 +11,7 @@ HTMLPage::~HTMLPage()
 void HTMLPage::SetURL(const QUrl & u)
 {
     if (u.toString().left(22).contains("reddit.com") && !u.toString().left(22).contains("old.reddit.com")) {
-        webasset.SetURL(QUrl(u.toString().replace("reddit.com", "old.reddit.com")));
-    }
-    else if (u.toString().left(22).contains("www.reddit.com")) {
-        webasset.SetURL(QUrl(u.toString().replace("www.reddit.com", "old.reddit.com")));
+        webasset.SetURL(QUrl(u.toString().replace("www.reddit.com", "reddit.com").replace("reddit.com", "old.reddit.com")));
     }
     else {
         webasset.SetURL(u);
@@ -277,7 +274,6 @@ void HTMLPage::ConstructData()
 void HTMLPage::ReadBookmarksContent()
 {
     const QString translator_path = MathUtil::GetTranslatorPath();
-    Clear();
 
     content_type = "firebox";
 
@@ -322,7 +318,7 @@ void HTMLPage::ReadBookmarksContent()
 
 void HTMLPage::ReadWorkspacesContent()
 {
-    Clear();
+    const QString thumb("thumb.jpg");
 
     //now generate the room
     content_type = "firebox";
@@ -339,18 +335,16 @@ void HTMLPage::ReadWorkspacesContent()
     const QVariantList workspaces = b.GetWorkspaces();
     for (int i=0; i<workspaces.size(); ++i) {
 
-        const QString thumb = QString("thumb.jpg");
-
         const QString url = workspaces[i].toMap()["url"].toString();
 
-        QVariantMap img_data;        
+        QVariantMap img_data;
         if (QString::compare(url.left(4), "http") == 0) {
             img_data["src"] = QUrl(url).resolved(thumb).toString();
         }
         else {
             img_data["src"] = QUrl::fromLocalFile(url).resolved(thumb).toString();
         }
-        img_data["id"] = QString("thumb") + QString::number(i);       
+        img_data["id"] = QString("thumb") + QString::number(i);
 
         QVariantMap link_data;
         link_data["id"]= QString("portal") + QString::number(i);
@@ -363,7 +357,7 @@ void HTMLPage::ReadWorkspacesContent()
         link_data["pos"] = QString::number(-i*2 + (float(workspaces.size()) * 2.0f) * 0.5f - 1.0f) + " 0 5";
         link_data["fwd"] = "0 0 -1";
         link_data["scale"] = "1.8 2.5 1.0";
-        link_data["thumb_id"] = img_data["id"];
+//        link_data["thumb_id"] = img_data["id"];
         QColor c;
         c.setHsl(30 * i, 128, 128);
         link_data["col"] = c.name();

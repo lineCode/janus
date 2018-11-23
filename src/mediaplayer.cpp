@@ -11,12 +11,13 @@ MediaPlayer::MediaPlayer() :
     if (!vlcInstance) {
         // VLC pointers
         const char * const vlc_args[] = {
-              "--intf=dummy", // Don't use any interface
-              "--quiet",
-              //"--ignore-config",        // Don't use VLC's config
-              //"--extraintf=logger", // Don't use any interface
-              "--verbose=0", // Be verbose
-               };
+            "--intf=dummy", // Don't use any interface
+            "--quiet",
+            //"--ignore-config",        // Don't use VLC's config
+            //"--extraintf=logger", // Don't use any interface
+            "--verbose=0",  // Be verbose
+            "--no-ts-trust-pcr" // Fixes playback for some .m3u8 files
+        };
 
         // We launch VLC
         vlcInstance = libvlc_new(sizeof(vlc_args) / sizeof(vlc_args[0]), vlc_args);
@@ -63,13 +64,16 @@ void MediaPlayer::SetupOutput(MediaContext * ctx, QString vid_url, const bool lo
     if (!ctx->setup){
         MediaPlayer::ClearOutput(ctx);
 
+        ctx->video_lock.lock();
+        ctx->audio_lock.lock();
+
         ctx->setup = true;
         ctx->audio_only = audio_only;
         ctx->player = this;
 
         if (!ctx->audio_only){
-            ctx->img[0] = QImage();
-            ctx->img[1] = QImage();
+            ctx->img[0] = new QImage(1080, 720, QImage::Format_ARGB32);
+            ctx->img[1] = new QImage(1080, 720, QImage::Format_ARGB32);
 
             ctx->ou3d = ou3d;
             ctx->sbs3d = sbs3d;
@@ -80,6 +84,7 @@ void MediaPlayer::SetupOutput(MediaContext * ctx, QString vid_url, const bool lo
         }
 
         //Generate OpenAL source for video
+        ctx->buffer_queue = new QList<ALuint>();
         ALuint * buffer = (ALuint *) malloc(sizeof(ALuint) * buffer_pool_size);
         if (buffer != nullptr)
         {                    
@@ -87,7 +92,7 @@ void MediaPlayer::SetupOutput(MediaContext * ctx, QString vid_url, const bool lo
             alGenBuffers(buffer_pool_size, buffer);
 
             for (int i=0;i<buffer_pool_size;++i) {
-                ctx->buffer_queue.push_back(buffer[i]);
+                ctx->buffer_queue->push_back(buffer[i]);
             }
 
             ctx->src = vid_url;
@@ -103,8 +108,9 @@ void MediaPlayer::SetupOutput(MediaContext * ctx, QString vid_url, const bool lo
                                            &MediaPlayer::lock,
                                            &MediaPlayer::unlock,
                                            &MediaPlayer::display,
-                                           ctx);
-                libvlc_video_set_format(ctx->media_player, "RV32", 1080, 720, 1080*4);
+                                           ctx);                
+//                libvlc_video_set_format(ctx->media_player, "RV32", 1080, 720, 1080*4);
+                libvlc_video_set_format(ctx->media_player, "RGBA", 1080, 720, 1080*4);
                 libvlc_audio_set_callbacks(ctx->media_player,
                                            &MediaPlayer::play,
                                            &MediaPlayer::pause,
@@ -121,6 +127,9 @@ void MediaPlayer::SetupOutput(MediaContext * ctx, QString vid_url, const bool lo
         else {
             qDebug("MediaPlayer::SetupOutput - Error: Failed to alloc data in VideoSurface::SetupOutput.");
         }
+
+        ctx->audio_lock.unlock();
+        ctx->video_lock.unlock();
     }
 }
 
@@ -142,8 +151,16 @@ void MediaPlayer::ClearOutput(MediaContext * ctx)
     ctx->video_lock.lock();
     ctx->audio_lock.lock();
 
+    for (int i=0; i<2; i++)
+    {
+        if (ctx->img[i]) {
+            delete ctx->img[i];
+            ctx->img[i] = nullptr;
+        }
+    }
+
     if (ctx->media_player){
-        QtConcurrent::run(&MediaPlayer::ClearVLC, ctx);
+        QtConcurrent::run(&MediaPlayer::ClearVLC, ctx).waitForFinished();
     }
 
     if (ctx->openal_source > 0) {
@@ -158,7 +175,7 @@ void MediaPlayer::ClearOutput(MediaContext * ctx)
         alGetSourcei(ctx->openal_source, AL_BUFFERS_QUEUED, &buffers_to_dequeue);
         if (buffers_to_dequeue > 0)
         {
-            std::vector<ALuint> buffHolder;
+            QVector<ALuint> buffHolder;
             buffHolder.resize(buffers_to_dequeue);
             alSourceUnqueueBuffers(ctx->openal_source, buffers_to_dequeue, buffHolder.data());
             for (int i=0;i<buffers_to_dequeue;++i) {
@@ -166,10 +183,16 @@ void MediaPlayer::ClearOutput(MediaContext * ctx)
                 alDeleteBuffers(1, &buffHolder[i]);
             }
         }
-        while (!ctx->buffer_queue.isEmpty()) {
-            ALuint myBuff = ctx->buffer_queue.front();
-            ctx->buffer_queue.pop_front();
-            alDeleteBuffers(1, &myBuff);
+
+        if (ctx->buffer_queue) {
+            while (!ctx->buffer_queue->isEmpty()) {
+                ALuint myBuff = ctx->buffer_queue->front();
+                ctx->buffer_queue->pop_front();
+                alDeleteBuffers(1, &myBuff);
+            }
+
+            ctx->buffer_queue->clear();
+            delete ctx->buffer_queue;
         }
 
         alSourcei(ctx->openal_source, AL_BUFFER, 0);
@@ -318,22 +341,34 @@ void MediaPlayer::SetUpdateTexture(MediaContext * ctx, const bool b)
 
 void MediaPlayer::UpdateTexture(MediaContext * ctx)
 {
+    if (ctx->audio_only) return;
     if (ctx->update_tex && ctx->video_lock.tryLock())
     {
-        if (!ctx->img[0].isNull())
+        if (ctx->img[0] && !ctx->img[0]->isNull())
         {
             if (ctx->m_texture_handles[0] == nullptr || ctx->m_texture_handles[0] == AssetImage::null_image_tex_handle)
             {
-                ctx->m_texture_handles[0] = RendererInterface::m_pimpl->CreateTextureQImage(ctx->img[0], true, true, false, TextureHandle::ALPHA_TYPE::NONE, TextureHandle::COLOR_SPACE::SRGB);
+                //ctx->m_texture_handles[0] = RendererInterface::m_pimpl->CreateTextureQImage(*(ctx->img[0]), true, true, false, TextureHandle::ALPHA_TYPE::NONE, TextureHandle::COLOR_SPACE::SRGB);
+                ctx->m_texture_handles[0] = RendererInterface::m_pimpl->CreateTextureQImage(*(ctx->img[0]), true, true, false, TextureHandle::ALPHA_TYPE::BLENDED, TextureHandle::COLOR_SPACE::SRGB);
             }
             else
             {
 #ifdef __ANDROID__
                 RendererInterface::m_pimpl->UpdateTextureHandleData(ctx->m_texture_handles[0].get(), 0 ,0, 0,
-                                        ctx->img[0].width(), ctx->img[0].height(), GL_RGBA, GL_UNSIGNED_BYTE, (void *)ctx->img[0].constBits(), ctx->img[0].width() * ctx->img[0].height() * 4);
+                                        ctx->img[0]->width(), ctx->img[0]->height(), GL_RGBA, GL_UNSIGNED_BYTE, (void *)ctx->img[0]->constBits(), ctx->img[0]->width() * ctx->img[0]->height() * 4);
 #else
+//                qDebug() << "ctx->img" << ctx->img[0]->format();
+//                qDebug() << "QColor(0,255,0,128)" << QColor(0,255,0,128);
+//                *(ctx->img[0]) = ctx->img[0]->convertToFormat(QImage::Format_ARGB32);
+                for (int i=0; i<ctx->img[0]->width(); ++i) {
+                    for (int j=0; j<ctx->img[0]->height()/2; ++j) {
+                        ctx->img[0]->setPixelColor(i,j,QColor(0,255,0,(i+j)%256));
+//                        qDebug() << i << j << ctx->img[0]->pixelColor(i,j);
+                    }
+                }
+//                ctx->img[0]->save(MathUtil::GetScreenshotPath() + "out-" + MathUtil::GetCurrentDateTimeAsString() + ".png", "png", 90);
                 RendererInterface::m_pimpl->UpdateTextureHandleData(ctx->m_texture_handles[0].get(), 0 ,0, 0,
-                                        ctx->img[0].width(), ctx->img[0].height(), GL_BGRA, GL_UNSIGNED_BYTE, (void *)ctx->img[0].constBits(), ctx->img[0].width() * ctx->img[0].height() * 4);
+                                        ctx->img[0]->width(), ctx->img[0]->height(), GL_BGRA, GL_UNSIGNED_BYTE, (void *)ctx->img[0]->constBits(), ctx->img[0]->width() * ctx->img[0]->height() * 4);
 #endif
                 RendererInterface::m_pimpl->GenerateTextureHandleMipMap(ctx->m_texture_handles[0].get());
             }
@@ -345,25 +380,26 @@ void MediaPlayer::UpdateTexture(MediaContext * ctx)
 
 void MediaPlayer::UpdateLeftRightTextures(MediaContext * ctx)
 {
-    if (ctx->audio_only) return;
+    if (ctx->audio_only) return;    
     if (ctx->update_tex && ctx->video_lock.tryLock())
     {
         for (int i=0; i<2; ++i)
         {
-            if (!ctx->img[i].isNull())
+            if (ctx->img[i] && !ctx->img[i]->isNull())
             {
                 if (!ctx->m_texture_handles[i] || ctx->m_texture_handles[i] == AssetImage::null_image_tex_handle)
                 {
-                    ctx->m_texture_handles[i] = RendererInterface::m_pimpl->CreateTextureQImage(ctx->img[i], true, true, false, TextureHandle::ALPHA_TYPE::NONE, TextureHandle::COLOR_SPACE::SRGB);
+//                    ctx->m_texture_handles[i] = RendererInterface::m_pimpl->CreateTextureQImage(*(ctx->img[i]), true, true, false, TextureHandle::ALPHA_TYPE::NONE, TextureHandle::COLOR_SPACE::SRGB);
+                    ctx->m_texture_handles[i] = RendererInterface::m_pimpl->CreateTextureQImage(*(ctx->img[i]), true, true, false, TextureHandle::ALPHA_TYPE::BLENDED, TextureHandle::COLOR_SPACE::SRGB);
                 }
                 else
                 {
 #ifdef __ANDROID__
                     RendererInterface::m_pimpl->UpdateTextureHandleData(ctx->m_texture_handles[i].get(),0 ,0, 0,
-                            ctx->img[i].width(), ctx->img[i].height(), GL_RGBA, GL_UNSIGNED_BYTE, (void *)ctx->img[i].constBits(), ctx->img[i].width() * ctx->img[i].height() * 4);
-#else
+                            ctx->img[i]->width(), ctx->img[i]->height(), GL_RGBA, GL_UNSIGNED_BYTE, (void *)ctx->img[i]->constBits(), ctx->img[i]->width() * ctx->img[i]->height() * 4);
+#else                    
                     RendererInterface::m_pimpl->UpdateTextureHandleData(ctx->m_texture_handles[i].get(),0 ,0, 0,
-                            ctx->img[i].width(), ctx->img[i].height(), GL_BGRA, GL_UNSIGNED_BYTE, (void *)ctx->img[i].constBits(), ctx->img[i].width() * ctx->img[i].height() * 4);
+                            ctx->img[i]->width(), ctx->img[i]->height(), GL_BGRA, GL_UNSIGNED_BYTE, (void *)ctx->img[i]->constBits(), ctx->img[i]->width() * ctx->img[i]->height() * 4);
 #endif
                     RendererInterface::m_pimpl->GenerateTextureHandleMipMap(ctx->m_texture_handles[i].get());
                 }
@@ -395,7 +431,7 @@ TextureHandle* MediaPlayer::GetRightTextureHandle(MediaContext * ctx)
 
 float MediaPlayer::GetAspectRatio(MediaContext * ctx) const
 {
-    if (ctx->audio_only || ctx->img[0].isNull() || ctx->video_width == 0 || ctx->video_height == 0) {
+    if (ctx->audio_only || !ctx->img[0] || ctx->img[0]->isNull() || ctx->video_width == 0 || ctx->video_height == 0) {
         return 0.7f;
     }
     else {
@@ -540,8 +576,8 @@ void *MediaPlayer::lock(void *data, void **p_pixels)
         return NULL;
     }
 
-    ctx->img[0] = QImage(1080, 720, QImage::Format_RGB32);
-    *p_pixels = ctx->img[0].bits();
+    *(ctx->img[0]) = ctx->img[0]->scaled(1080, 720);
+    *p_pixels = ctx->img[0]->bits();
 
     return NULL; /* picture identifier, not needed here */
 }
@@ -557,6 +593,7 @@ void MediaPlayer::unlock(void *data, void *id, void *const *)
 
     libvlc_media_track_t **tracks;
     unsigned tracksCount;
+    bool resized = false;
     tracksCount = libvlc_media_tracks_get(ctx->media, &tracks);
     if( tracksCount > 0 )
     {
@@ -566,8 +603,30 @@ void MediaPlayer::unlock(void *data, void *id, void *const *)
             if(track->i_type == libvlc_track_video && track->i_id == 0)
             {
                 libvlc_video_track_t *videoTrack = track->video;
-                ctx->video_width = videoTrack->i_width;
-                ctx->video_height = videoTrack->i_height;
+                if (ctx->video_width != videoTrack->i_width || ctx->video_height != videoTrack->i_height)
+                {
+                    ctx->video_width = videoTrack->i_width;
+                    ctx->video_height = videoTrack->i_height;
+
+                    if (ctx->video_width > 1080 || ctx->video_height > 720) {
+
+#ifdef __ANDROID__
+                        QImage * new_0 = new QImage(ctx->img[0]->rgbSwapped().scaled(QSize(ctx->video_width,ctx->video_height)));
+                        QImage * new_1 = new QImage(ctx->img[0]->rgbSwapped().scaled(QSize(ctx->video_width,ctx->video_height)));
+#else
+                        QImage * new_0 = new QImage(ctx->video_width, ctx->video_height, QImage::Format_ARGB32);
+                        QImage * new_1 = new QImage(ctx->video_width, ctx->video_height, QImage::Format_ARGB32);
+#endif
+
+                        delete ctx->img[0];
+                        delete ctx->img[1];
+
+                        ctx->img[0] = new_0;
+                        ctx->img[1] = new_1;
+
+                        resized = true;
+                    }
+                }
             }
         }
         libvlc_media_tracks_release(tracks, tracksCount);
@@ -575,45 +634,54 @@ void MediaPlayer::unlock(void *data, void *id, void *const *)
 
     //qDebug() << "Video size" << w << h;
 
+    if (!resized) {
 #ifdef __ANDROID__
-    ctx->img[0] = ctx->img[0].rgbSwapped().scaled(QSize(ctx->video_width,ctx->video_height));
+        *(ctx->img[0]) = (ctx->img[0]->rgbSwapped().scaled(QSize(ctx->video_width,ctx->video_height)));
 #else
-    ctx->img[0] = ctx->img[0].scaled(QSize(ctx->video_width,ctx->video_height));
+        *(ctx->img[0]) = (ctx->img[0]->scaled(QSize(ctx->video_width,ctx->video_height)));
 #endif
+    }
+
     if (ctx->sbs3d || ctx->ou3d)
     {
-        const int w = ctx->img[0].width();
-        const int h = ctx->img[0].height();
+        const int w = ctx->img[0]->width();
+        const int h = ctx->img[0]->height();
 
         if (ctx->sbs3d)
         {
             if (ctx->reverse3d)
             {
-                ctx->img[1] = ctx->img[0].copy(0,0,w/2,h);
-                ctx->img[0] = ctx->img[0].copy(w/2,0,w/2,h);
+                *(ctx->img[1]) = (ctx->img[0]->copy(0,0,w/2,h));
+                *(ctx->img[0]) = (ctx->img[0]->copy(w/2,0,w/2,h));
             }
             else
             {
-                ctx->img[1] = ctx->img[0].copy(w/2,0,w/2,h);
-                ctx->img[0] = ctx->img[0].copy(0,0,w/2, h);
+                *(ctx->img[1]) = (ctx->img[0]->copy(w/2,0,w/2,h));
+                *(ctx->img[0]) = (ctx->img[0]->copy(0,0,w/2, h));
             }
         }
         else if (ctx->ou3d)
         {
             if (ctx->reverse3d)
             {
-                ctx->img[1] = ctx->img[0].copy(0,h/2,w,h/2);
-                ctx->img[0] = ctx->img[0].copy(0,0,w,h/2);
+                *(ctx->img[1]) = (ctx->img[0]->copy(0,h/2,w,h/2));
+                *(ctx->img[0]) = (ctx->img[0]->copy(0,0,w,h/2));
             }
             else
             {
-                ctx->img[1] = ctx->img[0].copy(0,0,w,h/2);
-                ctx->img[0] = ctx->img[0].copy(0,h/2,w,h/2);
+                *(ctx->img[1]) = (ctx->img[0]->copy(0,0,w,h/2));
+                *(ctx->img[0]) = (ctx->img[0]->copy(0,h/2,w,h/2));
             }
         }
     }
+    else
+    {
+        delete ctx->img[1];
+        ctx->img[1] = nullptr;
+    }
 
-    //ctx->img[0].save(MathUtil::GetScreenshotPath() + "out-" + MathUtil::GetCurrentDateTimeAsString() + ".jpg", "jpg", 90);
+//    ctx->img[0]->save(MathUtil::GetScreenshotPath() + "out-" + MathUtil::GetCurrentDateTimeAsString() + ".png", "png", 90);
+//    qDebug() << "ctx->img" << ctx->img[0]->format();
 
     ctx->update_tex = true;
 
@@ -646,11 +714,13 @@ void MediaPlayer::play(void *data, const void *samples, unsigned count, int64_t 
         alSourcei(ctx->openal_source, AL_SOURCE_RELATIVE, AL_FALSE);
         alSource3f(ctx->openal_source, AL_POSITION, ctx->pos.x(), ctx->pos.y(), ctx->pos.z()); //set source position
         alSource3f(ctx->openal_source, AL_VELOCITY, ctx->vel.x(), ctx->vel.y(), ctx->vel.z()); //set source velocity
+        alSourcef(ctx->openal_source, AL_DOPPLER_FACTOR, ctx->doppler_factor);
     }
     else{
         alSourcei(ctx->openal_source, AL_SOURCE_RELATIVE, AL_TRUE);
         alSource3f(ctx->openal_source, AL_POSITION, 0, 0, 0); //set source position
         alSource3f(ctx->openal_source, AL_VELOCITY, 0, 0, 0); //set source velocity
+        alSourcef(ctx->openal_source, AL_DOPPLER_FACTOR, ctx->doppler_factor);
     }
 
     alSourcef(ctx->openal_source, AL_ROLLOFF_FACTOR, 2.0f);
@@ -663,20 +733,20 @@ void MediaPlayer::play(void *data, const void *samples, unsigned count, int64_t 
     alGetSourcei(ctx->openal_source, AL_BUFFERS_PROCESSED, &availBuffers);
     //qDebug() << availBuffers;
     if (availBuffers > 0) {
-        std::vector<ALuint> buffHolder;
+        QVector<ALuint> buffHolder;
         buffHolder.resize(availBuffers); //49.50 crash with audio on Windows
         alSourceUnqueueBuffers(ctx->openal_source, availBuffers, buffHolder.data());
         for (int i=0;i<availBuffers;++i) {
             // Push the recovered buffers back on the queue
-            ctx->buffer_queue.push_back(buffHolder[i]);
+            ctx->buffer_queue->push_back(buffHolder[i]);
         }
     }
 
     //qDebug() << "buffer input queue" << SoundManager::buffer_input_queue.size();
-    if (!ctx->buffer_queue.isEmpty()) { // We just drop the data if no buffers are available
+    if (!ctx->buffer_queue->isEmpty()) { // We just drop the data if no buffers are available
 
-        ALuint myBuff = ctx->buffer_queue.front();
-        ctx->buffer_queue.pop_front();
+        ALuint myBuff = ctx->buffer_queue->front();
+        ctx->buffer_queue->pop_front();
 
         //49.8 bugfix - use the buffer size (which can vary), not a fixed size causing portions of audio not to play
         QByteArray audio = QByteArray((const char *) samples, count*2); //16 BIT = 2 BYTES PER SAMPLE
@@ -730,6 +800,4 @@ void MediaPlayer::flush(void *data, int64_t )
 void MediaPlayer::drain(void *data)
 {
     (void) data;
-    /*audio_lock.lock();
-    audio_lock.unlock();*/
 }

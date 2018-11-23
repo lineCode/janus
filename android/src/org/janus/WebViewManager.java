@@ -1,13 +1,23 @@
 package org.janus;
 
 import java.lang.Thread;
+import java.net.URI;
+import java.net.URL;
+import java.net.URLConnection;
 import java.nio.IntBuffer;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
+import java.text.DateFormat;
+import java.text.SimpleDateFormat;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Hashtable;
 import java.util.Iterator;
 import java.util.Arrays;
+import java.util.Date;
+import java.util.TimeZone;
+import java.util.LinkedList;
+import java.util.StringTokenizer;
 import java.util.concurrent.locks.Lock;
 import java.util.concurrent.locks.ReentrantLock;
 
@@ -39,6 +49,9 @@ import android.view.View;
 import android.view.ViewGroup;
 import android.view.Window;
 import android.view.WindowManager.LayoutParams;
+import android.webkit.CookieManager;
+import android.webkit.WebResourceRequest;
+import android.webkit.WebResourceResponse;
 import android.webkit.WebChromeClient;
 import android.webkit.WebSettings;
 import android.webkit.WebView;
@@ -54,18 +67,8 @@ import android.opengl.GLUtils;
 import javax.microedition.khronos.egl.EGLConfig;
 import javax.microedition.khronos.opengles.GL10;
 
-//import org.mozilla.gecko.gfx.CompositorController;
-//import org.mozilla.gecko.gfx.GeckoDisplay;
-//import org.mozilla.geckoview.GeckoView;
-//import org.mozilla.geckoview.GeckoRuntime;
-//import org.mozilla.geckoview.GeckoRuntimeSettings;
-//import org.mozilla.geckoview.GeckoResponse;
-//import org.mozilla.geckoview.GeckoSession;
-//import org.mozilla.geckoview.GeckoSessionSettings;
-
 public class WebViewManager
 {
-    private boolean use_gecko = false;
     private Context context;
     private boolean paused = false;
     private final float[] rgbSwapTransform =
@@ -79,10 +82,13 @@ public class WebViewManager
     private final ColorMatrixColorFilter colorFilter = new ColorMatrixColorFilter(colorMatrix);
     private final Paint rgbSwapPaint = new Paint();
 
+    private LinkedList<String> cookies = new LinkedList<String>();
+
     class AWebView extends WebView
     {
         int width = 1000;
         int height = 800;
+        String old_cookies = "";
 
         public AWebView(Context context){
             super(context);
@@ -99,25 +105,73 @@ public class WebViewManager
 
         // draw magic
         @Override
-        public void onDraw( Canvas canvas ) {
-            // Requires a try/catch for .lockCanvas( null )
-            try {
-                Bitmap b = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888);
-                Canvas c = new Canvas(b);
-                //c.scale(1, -1, w/2, h/2);
-                float xScale = c.getWidth() / (float)c.getWidth();
-                c.scale(xScale, xScale);
-                c.translate(-getScrollX(), -getScrollY());
-                super.onDraw(c); // Call the WebView onDraw targetting the canvas
+        protected void onDraw( Canvas canvas ) {
 
-                if (bitmapsList.get((Integer)AWebView.this.getTag()) != null){
-                    bitmapsList.get((Integer)AWebView.this.getTag()).recycle();
-                }
-                bitmapsList.put((Integer)AWebView.this.getTag(), b);
-            } catch ( Exception e ) {
+            if (webViewLockList.containsKey((Integer)AWebView.this.getTag())) webViewLockList.get((Integer)AWebView.this.getTag()).lock();
+            else {
+                return;
             }
+
+            try {
+                try {
+                    Bitmap b = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888);
+                    Canvas c = new Canvas(b);
+                    //c.scale(1, -1, w/2, h/2);
+                    float xScale = c.getWidth() / (float)c.getWidth();
+                    c.scale(xScale, xScale);
+                    c.translate(-getScrollX(), -getScrollY());
+                    super.onDraw(c); // Call the WebView onDraw targetting the canvas
+
+                    if (bitmapsList.get((Integer)AWebView.this.getTag()) != null){
+                        bitmapsList.get((Integer)AWebView.this.getTag()).recycle();
+                    }
+                    bitmapsList.put((Integer)AWebView.this.getTag(), b);
+                } catch ( Exception e ) {
+                }
+
+                if (this.getUrl() != null) {
+                    CookieManager cm = CookieManager.getInstance();
+                    String c = cm.getCookie(this.getUrl());
+
+                    if (c != null && !c.equals("") && !c.equals(old_cookies))
+                    {
+                        try {
+                            old_cookies = c;
+
+                            URI uri = new URI(this.getUrl());
+                            String host = uri.getHost();
+                            String domain = host.startsWith("www.") ? host.substring(4) : host;
+
+                            //Log.i("new janus-cookies", c);
+
+                            /*Date expdate= new Date();
+                            expdate.setTime (expdate.getTime() + (1000 * 60 * 60 * 24));
+                            DateFormat df = new SimpleDateFormat("EEE, dd-MMM-yyyy HH:mm:ss zzz");
+                            df.setTimeZone(TimeZone.getTimeZone("GMT"));
+                            String expiry = df.format(expdate);*/
+
+                            StringTokenizer cookielist = new StringTokenizer(c, ";");
+
+                            while (cookielist.hasMoreTokens()) {
+                                String cookie = cookielist.nextToken().trim() + ";Path=/;Domain=." + domain + ";HttpOnly"; //";Expires=" + expiry +
+                                //Log.d("janus-cookie on draw", cookie);
+                                if (!cookies.contains(cookie)) {
+                                    cookies.push(cookie);
+                                }
+                            }
+                        }
+                        catch (Exception e){
+                        }
+                    }
+                }
+            }
+            finally{
+                if (webViewLockList.containsKey((Integer) AWebView.this.getTag())) webViewLockList.get((Integer) AWebView.this.getTag()).unlock();
+            }
+
             // super.onDraw( canvas ); // <- Uncomment this if you want to show the original view
         }
+
         public void setTextureWidth(int w) {
             width = w;
         }
@@ -127,258 +181,7 @@ public class WebViewManager
         }
     }
 
-//    class GeckoWebView extends GeckoView implements CompositorController.GetPixelsCallback
-//    {
-//        private String url;
-//        private boolean canGoBack;
-//        private boolean canGoForward;
-//        private Lock drawLock = new ReentrantLock();
-
-//        //private int scrollx = 0;
-//        //private int scrolly = 0;
-
-//        public GeckoWebView(Context context){
-//            super(context);
-//            //super.setWillNotDraw(false);
-//            //super.setWillNotCacheDrawing(true);
-//        }
-
-//        public int computeHorizontalScrollRange(){
-//            return super.computeHorizontalScrollRange();
-//        }
-
-//        public int computeVerticalScrollRange(){
-//            return super.computeVerticalScrollRange();
-//        }
-
-//        public String getUri(){
-//            return url;
-//        }
-
-//        public boolean getCanGoBack(){
-//            return canGoBack;
-//        }
-
-//        public SurfaceView getSurfaceView(){
-//            return super.mSurfaceView;
-//        }
-
-//        public boolean getCanGoForward(){
-//            return canGoForward;
-//        }
-
-//        /*public int scrollX(int x){
-//            scrollx += x;
-//            return scrollx;
-//        }
-
-//        public int scrollY(int y){
-//            scrolly += y;
-//            return scrolly;
-//        }*/
-
-//        public void onPixelsResult(int w, int h, IntBuffer pixels){
-//            if (w == 0 || h == 0) return;
-
-//            if (drawLock.tryLock()){
-//                Bitmap b1 = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888);
-//                b1.copyPixelsFromBuffer(pixels);
-
-//                boolean r = false;
-//                if (b1 != null){
-//                    /*Bitmap b = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888);
-//                    Canvas c = new Canvas(b);
-//                    c.scale(1, -1, w/2, h/2);
-//                    c.drawBitmap(b1, 0, 0, rgbSwapPaint);*/
-
-//                    if (!(bitmapsList.contains((Integer)GeckoWebView.this.getTag())) ||
-//                        (bitmapsList.contains((Integer)GeckoWebView.this.getTag()) && bitmapsList.get((Integer)GeckoWebView.this.getTag()) != null && !b1.sameAs(bitmapsList.get((Integer)GeckoWebView.this.getTag())))){
-//                        r = true;
-//                    }
-//                    if (r) {
-//                        if (bitmapsList.get((Integer)GeckoWebView.this.getTag()) != null){
-//                            bitmapsList.get((Integer)GeckoWebView.this.getTag()).recycle();
-//                        }
-//                        bitmapsList.put((Integer)GeckoWebView.this.getTag(), b1);
-//                    }
-//                }
-//                repaintRequestedList.put((Integer)GeckoWebView.this.getTag(), r );
-//                drawLock.unlock();
-//            }
-//        }
-
-//        /*@Override
-//        public boolean onTouchEvent(final MotionEvent event) {
-//            Log.i("TOUCHEVENTACTION", MotionEvent.actionToString(event.getAction()));
-//            Log.i("TOUCHEVENTAXISX", Float.toString(event.getAxisValue(MotionEvent.AXIS_HSCROLL)));
-//            Log.i("TOUCHEVENTAXISY", Float.toString(event.getAxisValue(MotionEvent.AXIS_VSCROLL)));
-//            Log.i("TOUCHEVENTX", Float.toString(event.getX()));
-//            Log.i("TOUCHEVENTY", Float.toString(event.getY()));
-//            return super.onTouchEvent(event);
-//        }
-
-//        @Override
-//        public boolean onHoverEvent(final MotionEvent event) {
-//            Log.i("HOVEREVENTACTION", MotionEvent.actionToString(event.getAction()));
-//            Log.i("HOVEREVENTAXISX", Float.toString(event.getAxisValue(MotionEvent.AXIS_HSCROLL)));
-//            Log.i("HOVEREVENTAXISY", Float.toString(event.getAxisValue(MotionEvent.AXIS_VSCROLL)));
-//            Log.i("HOVEREVENTX", Float.toString(event.getX()));
-//            Log.i("HOVEREVENTY", Float.toString(event.getY()));
-//            return super.onHoverEvent(event);
-//        }
-
-//        @Override
-//        public boolean onGenericMotionEvent(final MotionEvent event) {
-//            Log.i("GENERICEVENTACTION", MotionEvent.actionToString(event.getAction()));
-//            Log.i("GENERICEVENTAXISX", Float.toString(event.getAxisValue(MotionEvent.AXIS_HSCROLL)));
-//            Log.i("GENERICEVENTAXISY", Float.toString(event.getAxisValue(MotionEvent.AXIS_VSCROLL)));
-//            Log.i("GENERICEVENTX", Float.toString(event.getX()));
-//            Log.i("GENERICEVENTY", Float.toString(event.getY()));
-//            return super.onGenericMotionEvent(event);
-//        }*/
-
-//        public GeckoSession.ContentDelegate createContentDelegate(){
-//            return new GeckoSession.ContentDelegate(){
-//                @Override
-//                public void onTitleChange(GeckoSession session, String title) {
-//                }
-
-//                @Override
-//                public void onFullScreen(GeckoSession session, boolean fullScreen) {
-//                }
-
-//                @Override
-//                public void onContextMenu(GeckoSession session, int screenX, int screenY, String uri, @ElementType int elementType, String elementSrc) {
-//                }
-
-//                @Override
-//                public void onExternalResponse(GeckoSession session, GeckoSession.WebResponseInfo response) {
-//                }
-
-//                @Override
-//                public void onFocusRequest(GeckoSession geckoSession) {
-//                }
-
-//                @Override
-//                public void onCloseRequest(GeckoSession geckoSession) {
-//                }
-//            };
-//        }
-
-//        public GeckoSession.ProgressDelegate createProgressDelegate(){
-//            return new GeckoSession.ProgressDelegate(){
-//                @Override
-//                public void onPageStart(GeckoSession session, String url) {
-//                }
-
-//                @Override
-//                public void onPageStop(GeckoSession session, boolean success) {
-//                }
-
-//                @Override
-//                public void onSecurityChange(GeckoSession session,
-//                                             GeckoSession.ProgressDelegate.SecurityInformation securityInfo) {
-//                }
-//            };
-//        }
-
-//        public GeckoSession.NavigationDelegate createNavigationDelegate(){
-//            return new GeckoSession.NavigationDelegate(){
-//                @Override
-//                public void onLocationChange(GeckoSession session, String url) {
-//                    GeckoWebView.this.url = url;
-
-//                    int tag = ((Integer)GeckoWebView.this.getTag()).intValue();
-//                    urlList.put(tag, url);
-//                    urlChangedList.put(tag, true);
-//                }
-
-//                @Override
-//                public void onCanGoBack(GeckoSession session, boolean canGoBack) {
-//                    GeckoWebView.this.canGoBack =  canGoBack;
-//                }
-
-//                @Override
-//                public void onCanGoForward(GeckoSession session, boolean canGoForward) {
-//                    GeckoWebView.this.canGoForward =  canGoForward;
-//                }
-
-//                @Override
-//                public void onLoadRequest(GeckoSession session, String uri, int target, GeckoResponse<Boolean> response) {
-//                //public void onLoadRequest(GeckoSession session, String uri, int target, int flags, GeckoResponse<Boolean> response) {
-//                    // If this is trying to load in a new tab, just load it in the current one
-//                    if (target == GeckoSession.NavigationDelegate.TARGET_WINDOW_NEW) {
-//                        GeckoWebView.this.getSession().loadUri(uri);
-//                        response.respond(true);
-//                    }
-
-//                    // Otherwise allow the load to continue normally
-//                    response.respond(false);
-//                }
-
-//                @Override
-//                public void onNewSession(GeckoSession geckoSession, String s, GeckoResponse<GeckoSession> response) {
-//                }
-//            };
-//        }
-
-//        public GeckoSession.TrackingProtectionDelegate createTrackingProtectionDelegate(){
-//            return new GeckoSession.TrackingProtectionDelegate(){
-//                @Override
-//                public void onTrackerBlocked(GeckoSession geckoSession, String s, int i) {
-//                }
-//            };
-//        }
-
-//        public GeckoSession.PromptDelegate createPromptDelegate(){
-//            return new GeckoSession.PromptDelegate(){
-//                @Override
-//                public void onAlert(final GeckoSession session, final String title, final String msg,
-//                                  final AlertCallback callback) {
-//                }
-
-//                @Override
-//                public void onButtonPrompt(final GeckoSession session, final String title,
-//                                            final String msg, final String[] btnMsg,
-//                                            final ButtonCallback callback) {
-//                }
-
-//                @Override
-//                public void onTextPrompt(final GeckoSession session, final String title,
-//                                          final String msg, final String value,
-//                                          final TextCallback callback) {
-//                }
-
-//                @Override
-//                public void onAuthPrompt(GeckoSession geckoSession, String s, String s1, AuthOptions authOptions, final AuthCallback authCallback) {
-//                }
-
-//                @Override
-//                public void onChoicePrompt(final GeckoSession session, final String title,
-//                                            final String msg, final int type,
-//                                            final Choice[] choices, final ChoiceCallback callback) {
-//                }
-
-//                @Override
-//                public void onColorPrompt(final GeckoSession session, final String title,
-//                                           final String value, final TextCallback callback) {
-//                }
-
-//                @Override
-//                public void onDateTimePrompt(final GeckoSession session, final String title,
-//                                              final int type, final String value, final String min,
-//                                              final String max, final TextCallback callback) {
-//                }
-
-//                @Override
-//                public void onFilePrompt(GeckoSession session, String title, int type, String[] mimeTypes, FileCallback callback) {
-//                }
-//            };
-//        }
-//    }
-
     protected ArrayList<View> webViewsList = new ArrayList<View>();
-//    protected Hashtable<Integer, GeckoSession> sessionsList = new Hashtable<Integer, GeckoSession>();
     protected Hashtable<Integer, Lock> updatesEnabledList = new Hashtable<Integer, Lock>();
     protected Hashtable<Integer, Bitmap> bitmapsList = new Hashtable<Integer, Bitmap>();
     protected Hashtable<Integer, Integer> texturesList = new Hashtable<Integer, Integer>();
@@ -395,8 +198,6 @@ public class WebViewManager
     protected Hashtable<Integer, Integer> verticalRangeList = new Hashtable<Integer, Integer>();
     protected Hashtable<Integer, Lock> webViewLockList = new Hashtable<Integer, Lock>();
     protected Hashtable<Integer, Lock> hitTestLockList = new Hashtable<Integer, Lock>();
-
-//    private static volatile GeckoRuntime geckoRuntime;
 
     protected View findWebViewByTag(int tag) {
         View webViewRes = null;
@@ -415,17 +216,13 @@ public class WebViewManager
         this.context = c;
         AWebView.enableSlowWholeDocumentDraw();
         rgbSwapPaint.setColorFilter(colorFilter);
-
-//        if (geckoRuntime == null) {
-//            final GeckoRuntimeSettings.Builder runtimeSettingsBuilder =
-//                    new GeckoRuntimeSettings.Builder();
-//            runtimeSettingsBuilder.useContentProcessHint(true);
-//            geckoRuntime = GeckoRuntime.create(context.getApplicationContext(), runtimeSettingsBuilder.build());
-//        }
     }
 
-    public void setUseGeckoWebView(boolean b) {
-        use_gecko = false; //b;
+    public String getCookie() {
+        if (!cookies.isEmpty()) {
+            return cookies.pop();
+        }
+        return "";
     }
 
     public void createNewWebView(int tag) {
@@ -441,249 +238,79 @@ public class WebViewManager
             Lock l = new ReentrantLock();
             l.lock();
             try{
-                if (!use_gecko){
-                    webViewLockList.put(msg.what, l);
+                webViewLockList.put(msg.what, l);
 
-                    AWebView webView = new AWebView(context);
-                    webView.setTag(msg.what);
+                AWebView webView = new AWebView(context);
+                webView.setTag(msg.what);
 
-                    webView.getSettings().setJavaScriptEnabled(true);
-                    webView.getSettings().setBuiltInZoomControls( true );
-                    webView.getSettings().setUseWideViewPort(true);
-                    webView.getSettings().setLoadWithOverviewMode(true);
-                    //webView.setScrollBarStyle(WebView.SCROLLBARS_OUTSIDE_OVERLAY);
-                    //webView.setScrollbarFadingEnabled(false);
-                    webView.getSettings().setDomStorageEnabled(true);
-                    webView.getSettings().setMixedContentMode(WebSettings.MIXED_CONTENT_ALWAYS_ALLOW);
-                    webView.getSettings().setMediaPlaybackRequiresUserGesture(false);
-                    //webView.getSettings().setOffscreenPreRaster(true);
-                    webView.getSettings().setUserAgentString("Desktop"); //Android
-                    webView.setWebViewClient(new WebViewClient() {
-                        @Override
-                        public boolean shouldOverrideUrlLoading(WebView view, String url) {
-                            return false;
+                webView.getSettings().setJavaScriptEnabled(true);
+                webView.getSettings().setBuiltInZoomControls( true );
+                webView.getSettings().setUseWideViewPort(true);
+                webView.getSettings().setLoadWithOverviewMode(true);
+                //webView.setScrollBarStyle(WebView.SCROLLBARS_OUTSIDE_OVERLAY);
+                //webView.setScrollbarFadingEnabled(false);
+                webView.getSettings().setDomStorageEnabled(true);
+                webView.getSettings().setMixedContentMode(WebSettings.MIXED_CONTENT_ALWAYS_ALLOW);
+                webView.getSettings().setMediaPlaybackRequiresUserGesture(false);
+                webView.getSettings().setOffscreenPreRaster(true);
+                webView.getSettings().setUserAgentString("Desktop"); //Android
+                webView.setWebViewClient(new WebViewClient() {
+                    @Override
+                    public boolean shouldOverrideUrlLoading(WebView view, String url) {
+                        return false;
+                    }
+
+                    @Override
+                    public void onPageFinished(WebView view, String url) {
+                        Integer tag = (Integer) view.getTag();
+
+                        if (webViewLockList.containsKey(tag)) webViewLockList.get(tag).lock();
+                        else{
+                            return;
                         }
 
-                        @Override
-                        public void onPageFinished(WebView view, String url) {
-                            Integer tag = (Integer) view.getTag();
+                        try {
                             urlList.put(tag, view.getUrl());
                             urlChangedList.put(tag, true);
+
+                            horizontalRangeList.put(tag, ((AWebView) view).computeHorizontalScrollRange());
+                            verticalRangeList.put(tag, ((AWebView) view).computeVerticalScrollRange());
                         }
-                    });
-                    webView.setWebChromeClient(new WebChromeClient() {
-                        //@Override
-                        //public void onShowCustomView(View view, WebChromeClient.CustomViewCallback callback) {
-                        //    Log.i("SHOWINGCUSTOMVIEW","Here");
-                        //}
-                    });
-                    webView.setBackgroundColor(Color.WHITE); //TRANSPARENT,BLACK
-                    webView.setVisibility(View.VISIBLE);
-                    //webView.setDrawingCacheQuality(View.DRAWING_CACHE_QUALITY_LOW);
-                    //webView.setLayerType(View.LAYER_TYPE_HARDWARE, rgbSwapPaint);
+                        finally {
+                            if (webViewLockList.containsKey(tag)) webViewLockList.get(tag).unlock();
+                        }
+                    }
+                });
+                webView.setWebChromeClient(new WebChromeClient() {
+                    //@Override
+                    //public void onShowCustomView(View view, WebChromeClient.CustomViewCallback callback) {
+                    //    Log.i("SHOWINGCUSTOMVIEW","Here");
+                    //}
+                });
+                webView.setBackgroundColor(Color.WHITE); //TRANSPARENT,BLACK
+                webView.setVisibility(View.VISIBLE);
+                //webView.setDrawingCacheQuality(View.DRAWING_CACHE_QUALITY_LOW);
+                //webView.setLayerType(View.LAYER_TYPE_HARDWARE, rgbSwapPaint);
 
-                    webViewsList.add(webView);
+                webViewsList.add(webView);
+                webView.setFocusable(true);
 
-                    updatesEnabledList.put(msg.what, new ReentrantLock());
-                    repaintRequestedList.put(msg.what, false);
-                    urlChangedList.put(msg.what, false);
-                    scrollRequestedList.put(msg.what, false);
-                    widthList.put(msg.what, 1000);
-                    heightList.put(msg.what, 800);
-                    scrollXList.put(msg.what, 0);
-                    scrollYList.put(msg.what, 0);
-                    urlList.put(msg.what, "");
-                    hitTestsList.put(msg.what,"");
-                    hitTestLockList.put(msg.what, new ReentrantLock());
-
-                    updateWebView(((Integer)webView.getTag()).intValue());
-                }
-//                else{
-//                    webViewLockList.put(msg.what, l);
-
-//                    GeckoWebView webView = new GeckoWebView(context);
-//                    webView.setTag(msg.what);
-//                    webView.setVisibility(View.INVISIBLE);
-
-//                    final GeckoSessionSettings settings = new GeckoSessionSettings();
-//                    settings.setBoolean(GeckoSessionSettings.USE_MULTIPROCESS, true);
-//                    settings.setBoolean(GeckoSessionSettings.USE_PRIVATE_MODE, true);
-//                    settings.setBoolean(GeckoSessionSettings.USE_DESKTOP_MODE, true);
-//                    settings.setBoolean(GeckoSessionSettings.USE_TRACKING_PROTECTION, true);
-
-//                    GeckoSession geckoSession = new GeckoSession(settings);
-
-//                    geckoRuntime.getSettings().setJavaScriptEnabled(true);
-//                    geckoRuntime.getSettings().setWebFontsEnabled(true);
-
-//                    int categories = GeckoSession.TrackingProtectionDelegate.CATEGORY_SOCIAL +
-//                        GeckoSession.TrackingProtectionDelegate.CATEGORY_AD +
-//                        GeckoSession.TrackingProtectionDelegate.CATEGORY_ANALYTIC +
-//                        GeckoSession.TrackingProtectionDelegate.CATEGORY_CONTENT;
-
-//                    if (geckoSession != null) {
-//                        geckoSession.enableTrackingProtection(categories);
-//                    }
-
-//                    geckoSession.setContentDelegate(webView.createContentDelegate());
-//                    geckoSession.setProgressDelegate(webView.createProgressDelegate());
-//                    geckoSession.setNavigationDelegate(webView.createNavigationDelegate());
-//                    geckoSession.setTrackingProtectionDelegate(webView.createTrackingProtectionDelegate());
-//                    geckoSession.setPromptDelegate(webView.createPromptDelegate());
-
-//                    geckoSession.open(geckoRuntime);
-//                    geckoSession.getPanZoomController().setIsLongpressEnabled(false);
-//                    webView.setSession(geckoSession);
-
-//                    //geckoSession.loadUri("about:blank");
-
-//                    webViewsList.add(webView);
-
-//                    updatesEnabledList.put(msg.what, new ReentrantLock());
-//                    repaintRequestedList.put(msg.what, false);
-//                    urlChangedList.put(msg.what, false);
-//                    scrollRequestedList.put(msg.what, false);
-//                    widthList.put(msg.what, 1000);
-//                    heightList.put(msg.what, 800);
-//                    scrollXList.put(msg.what, 0);
-//                    scrollYList.put(msg.what, 0);
-//                    urlList.put(msg.what, "");
-//                    hitTestsList.put(msg.what,"");
-//                    hitTestLockList.put(msg.what, new ReentrantLock());
-
-//                    //Log.i("CREATINGGECKO", "WEBVIEW");
-//                }
+                updatesEnabledList.put(msg.what, new ReentrantLock());
+                repaintRequestedList.put(msg.what, false);
+                urlChangedList.put(msg.what, false);
+                scrollRequestedList.put(msg.what, false);
+                widthList.put(msg.what, 1000);
+                heightList.put(msg.what, 800);
+                horizontalRangeList.put(msg.what, 1000);
+                verticalRangeList.put(msg.what, 800);
+                scrollXList.put(msg.what, 0);
+                scrollYList.put(msg.what, 0);
+                urlList.put(msg.what, "");
+                hitTestsList.put(msg.what,"");
+                hitTestLockList.put(msg.what, new ReentrantLock());
             }
             finally{
                 l.unlock();
-            }
-        }
-    };
-
-    public void updateWebView(int tag) {
-        Message msg = new Message();
-        msg.what = tag;
-
-        if (!updateWebViewHandler.hasMessages(msg.what)){
-            updateWebViewHandler.sendMessage(msg);
-        }
-    }
-
-    protected Handler updateWebViewHandler = new Handler() {
-        public void handleMessage(Message msg) {
-            while (paused){
-                try {
-                    Thread.sleep(100);
-                } catch (Exception e) {
-                }
-            }
-
-            if (webViewLockList.containsKey(msg.what)) webViewLockList.get(msg.what).lock();
-            else{
-                updateWebViewHandler.sendMessage(msg);
-                return;
-            }
-            try{
-                View webView = findWebViewByTag(msg.what);
-
-                if (webView != null)
-                {
-                    if (!use_gecko) {
-
-                        //if (updatesEnabledList.get(msg.what).tryLock()){
-                            /*Bitmap b1 = null;
-
-                            webView.buildDrawingCache();
-                            b1 = webView.getDrawingCache();
-
-                            boolean r = false;
-                            if (b1 != null){
-                                Bitmap b = b1.copy(b1.getConfig(), true);
-
-                                webView.destroyDrawingCache();
-                                if (b != null) {
-                                    if (!(bitmapsList.contains(msg.what)) ||
-                                        (bitmapsList.contains(msg.what) && bitmapsList.get(msg.what) != null && !b.sameAs(bitmapsList.get(msg.what)))){
-                                        if (bitmapsList.get(msg.what) != null){
-                                            bitmapsList.get(msg.what).recycle();
-                                        }
-                                        bitmapsList.put(msg.what, b);
-                                        r = true;
-                                    }
-                                }
-                            }
-                            repaintRequestedList.put(msg.what, r );*/
-                            //updatesEnabledList.get(msg.what).unlock();
-                        //}
-
-                        HitTestResult h = ((AWebView) webView).getHitTestResult();
-                        if (h.getType() == WebView.HitTestResult.SRC_ANCHOR_TYPE ||
-                            h.getType() == WebView.HitTestResult.SRC_IMAGE_ANCHOR_TYPE ||
-                            h.getType() == WebView.HitTestResult.IMAGE_TYPE){
-
-                                if(h.getType()==HitTestResult.SRC_IMAGE_ANCHOR_TYPE) {
-                                    //Workaround; For images inside anchor tags, get link URL, NOT image
-                                    hitTestsList.put((Integer)((AWebView) webView).getTag(), "");
-                                    ((AWebView) webView).setWebViewClient(new WebViewClient(){
-                                        @Override
-                                        public boolean shouldOverrideUrlLoading(WebView view, String url) {
-                                            //Log.i("OVERRIDINGURL",url);
-                                            hitTestLockList.get((Integer)view.getTag()).lock();
-
-                                            hitTestsList.put((Integer)view.getTag(), url);
-
-                                            view.setWebViewClient(new WebViewClient() {
-                                                @Override
-                                                public boolean shouldOverrideUrlLoading(WebView view, String url) {
-                                                    return false;
-                                                }
-
-                                                @Override
-                                                public void onPageFinished(WebView view, String url) {
-                                                    Integer tag = (Integer) view.getTag();
-                                                    urlList.put(tag, view.getUrl());
-                                                    urlChangedList.put(tag, true);
-                                                }
-                                            });
-
-                                            hitTestLockList.get((Integer)view.getTag()).unlock();
-
-                                            return true;
-                                        }
-                                    });
-
-                                    KeyEvent event1 = new KeyEvent(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_DPAD_CENTER);
-                                    webView.dispatchKeyEvent(event1);
-                                    KeyEvent event2 = new KeyEvent(KeyEvent.ACTION_UP, KeyEvent.KEYCODE_DPAD_CENTER);
-                                    webView.dispatchKeyEvent(event2);
-
-                                    hitTestLockList.get(msg.what).lock();
-                                    if (!hitTestsList.containsKey((Integer)webView.getTag()) || hitTestsList.get((Integer)webView.getTag()) == ""){
-                                        hitTestsList.put(msg.what, h.getExtra());
-                                    }
-                                    hitTestLockList.get(msg.what).unlock();
-                                }
-                                else{
-                                    //Log.i("HITTESTRESULT", h.getExtra());
-                                    hitTestsList.put(msg.what, h.getExtra());
-                                }
-                        }
-
-                        horizontalRangeList.put(msg.what, ((AWebView) webView).computeHorizontalScrollRange());
-                        verticalRangeList.put(msg.what, ((AWebView) webView).computeVerticalScrollRange());
-                    }
-                    /*else {
-                        GeckoSession s = ((GeckoWebView) webView).getSession();
-                        s.getCompositorController().getPixels((GeckoWebView) webView);
-                        horizontalRangeList.put(msg.what, ((GeckoWebView) webView).computeHorizontalScrollRange());
-                        verticalRangeList.put(msg.what, ((GeckoWebView) webView).computeVerticalScrollRange());
-                    }*/
-                }
-                this.removeMessages(msg.what);
-            }
-            finally{
-                if (webViewLockList.containsKey(msg.what)) webViewLockList.get(msg.what).unlock();
-                updateWebView(msg.what);
             }
         }
     };
@@ -705,11 +332,6 @@ public class WebViewManager
             try{
                 View webView = findWebViewByTag(msg.what);
                 if (webView != null) {
-                    /*if (use_gecko) {
-                        GeckoSession session = ((GeckoWebView) webView).releaseSession();
-                        session.close();
-                    }*/
-
                     webViewsList.remove(context);
                     FrameLayout mainLayout = (FrameLayout) ((Activity) context).findViewById(R.id.content);
                     mainLayout.removeView(webView);
@@ -755,7 +377,6 @@ public class WebViewManager
                     webViewLockList.remove(msg.what);
 
                     createNewWebViewHandler.removeMessages(msg.what);
-                    updateWebViewHandler.removeMessages(msg.what);
                     moveWebViewHandler.removeMessages(msg.what);
                     resizeWebViewHandler.removeMessages(msg.what);
                     attachWebViewToMainLayoutHandler.removeMessages(msg.what);
@@ -880,8 +501,6 @@ public class WebViewManager
 
                         mainLayout.addView(viewToAttach, params);
                 }
-
-                //updateWebView(msg.what);
             }
             finally{
                 if (webViewLockList.containsKey(msg.what)) webViewLockList.get(msg.what).unlock();
@@ -905,31 +524,18 @@ public class WebViewManager
                 return;
             }
             try{
-                if (!use_gecko) {
-                    AWebView webView = (AWebView) findWebViewByTag(msg.what);
-                    if (webView != null) {
-                        String s = "";
-                        if (!(msg.obj.toString()).contains(":")) s += "http://";
-                        //webView.clearCache(true);
-                        webView.loadUrl(s + msg.obj.toString());
+                AWebView webView = (AWebView) findWebViewByTag(msg.what);
+                if (webView != null) {
+                    String s = "";
+                    if (!(msg.obj.toString()).contains(":")) s += "http://";
+                    //webView.clearCache(true);
+                    webView.loadUrl(s + msg.obj.toString());
 
-                        //Log.i("url", msg.obj.toString());
-                    }
-
-                    urlList.put(msg.what, webView.getUrl());
-                    urlChangedList.put(msg.what, true);
+                    //Log.i("url", msg.obj.toString());
                 }
-                /*else {
-                    GeckoWebView webView = (GeckoWebView) findWebViewByTag(msg.what);
-                    if (webView != null) {
-                        String s = "";
-                        if (!(msg.obj.toString()).contains(":")) s += "http://";
-                        //webView.clearCache(true);
-                        webView.getSession().loadUri(s + msg.obj.toString());
 
-                        //Log.i("url", msg.obj.toString());
-                    }
-                }*/
+                urlList.put(msg.what, webView.getUrl());
+                urlChangedList.put(msg.what, true);
             }
             finally{
                 if (webViewLockList.containsKey(msg.what)) webViewLockList.get(msg.what).unlock();
@@ -953,40 +559,16 @@ public class WebViewManager
                 return;
             }
             try{
-                if (!use_gecko){
-                    AWebView webView = (AWebView) findWebViewByTag(msg.what);
-                    if (webView != null) {
-                        if (webView.canGoBackOrForward(msg.arg1))
-                        {
-                            webView.goBackOrForward(msg.arg1);
-                        }
+                AWebView webView = (AWebView) findWebViewByTag(msg.what);
+                if (webView != null) {
+                    if (webView.canGoBackOrForward(msg.arg1))
+                    {
+                        webView.goBackOrForward(msg.arg1);
                     }
-
-                    urlList.put(msg.what, webView.getUrl());
-                    urlChangedList.put(msg.what, true);
                 }
-                /*else{
-                    GeckoWebView webView = (GeckoWebView) findWebViewByTag(msg.what);
-                    int steps = msg.arg1;
-                    if (webView != null) {
-                        while (steps != 0) {
-                            if (steps > 0) {
-                                if (webView.getCanGoForward())
-                                {
-                                    webView.getSession().goForward();
-                                }
-                                steps--;
-                            }
-                            if (steps < 0){
-                                if (webView.getCanGoBack())
-                                {
-                                    webView.getSession().goBack();
-                                }
-                                steps++;
-                            }
-                        }
-                    }
-                }*/
+
+                urlList.put(msg.what, webView.getUrl());
+                urlChangedList.put(msg.what, true);
             }
             finally{
                 if (webViewLockList.containsKey(msg.what)) webViewLockList.get(msg.what).unlock();
@@ -1009,21 +591,13 @@ public class WebViewManager
                 return;
             }
             try{
-                if (!use_gecko){
-                    AWebView webView = (AWebView) findWebViewByTag(msg.what);
-                    if (webView != null) {
-                        webView.reload();
-                    }
-
-                    urlList.put(msg.what, webView.getUrl());
-                    urlChangedList.put(msg.what, true);
+                AWebView webView = (AWebView) findWebViewByTag(msg.what);
+                if (webView != null) {
+                    webView.reload();
                 }
-                /*else{
-                    GeckoWebView webView = (GeckoWebView) findWebViewByTag(msg.what);
-                    if (webView != null) {
-                            webView.getSession().reload();
-                    }
-                }*/
+
+                urlList.put(msg.what, webView.getUrl());
+                urlChangedList.put(msg.what, true);
             }
             finally{
                 if (webViewLockList.containsKey(msg.what)) webViewLockList.get(msg.what).unlock();
@@ -1046,21 +620,13 @@ public class WebViewManager
                 return;
             }
             try{
-                if (!use_gecko){
-                    AWebView webView = (AWebView) findWebViewByTag(msg.what);
-                    if (webView != null) {
-                        webView.stopLoading();
-                    }
-
-                    urlList.put(msg.what, webView.getUrl());
-                    urlChangedList.put(msg.what, true);
+                AWebView webView = (AWebView) findWebViewByTag(msg.what);
+                if (webView != null) {
+                    webView.stopLoading();
                 }
-                /*else{
-                    GeckoWebView webView = (GeckoWebView) findWebViewByTag(msg.what);
-                    if (webView != null) {
-                            webView.getSession().stop();
-                    }
-                }*/
+
+                urlList.put(msg.what, webView.getUrl());
+                urlChangedList.put(msg.what, true);
             }
             finally{
                 if (webViewLockList.containsKey(msg.what)) webViewLockList.get(msg.what).unlock();
@@ -1084,19 +650,10 @@ public class WebViewManager
                 return;
             }
             try{
-                if (!use_gecko){
-                    AWebView webView = (AWebView) findWebViewByTag(msg.what);
-                    if (webView != null) {
-                            webView.loadData(msg.obj.toString(), "text/html; charset=UTF-8", "UTF-8");
-                    }
+                AWebView webView = (AWebView) findWebViewByTag(msg.what);
+                if (webView != null) {
+                        webView.loadData(msg.obj.toString(), "text/html; charset=UTF-8", "UTF-8");
                 }
-                /*else{
-                    GeckoWebView webView = (GeckoWebView) findWebViewByTag(msg.what);
-                    if (webView != null) {
-                        webView.getSession().loadString(msg.obj.toString(), "text/html");
-                    }
-
-                }*/
                 //repaintRequestedList.put(msg.what, true);
             }
             finally{
@@ -1121,19 +678,14 @@ public class WebViewManager
                 return;
             }
             try{
-                if (!use_gecko){
-                    AWebView webView = (AWebView) findWebViewByTag(msg.what);
-                    if (webView != null) {
-                        webView.evaluateJavascript(msg.obj.toString(), new ValueCallback<String>() {
-                            @Override
-                            public void onReceiveValue(String s) {
-                                //Log.d("EvaluatedJS", s);
-                            }
-                        });
-                    }
-                }
-                else{
-                    //TODO
+                AWebView webView = (AWebView) findWebViewByTag(msg.what);
+                if (webView != null) {
+                    webView.evaluateJavascript(msg.obj.toString(), new ValueCallback<String>() {
+                        @Override
+                        public void onReceiveValue(String s) {
+                            //Log.d("EvaluatedJS", s);
+                        }
+                    });
                 }
                 //repaintRequestedList.put(msg.what, true);
             }
@@ -1252,55 +804,7 @@ public class WebViewManager
                 View viewToScroll = null;
                 viewToScroll = findWebViewByTag(msg.what);
 
-                if (!use_gecko) {
-                    viewToScroll.scrollBy(msg.arg1, msg.arg2);
-                }
-//                else {
-//                    MotionEvent.PointerProperties mProperties[] = new MotionEvent.PointerProperties[1];
-//                    mProperties[0] = new MotionEvent.PointerProperties();
-//                    mProperties[0].id = 0;
-//                    mProperties[0].toolType = MotionEvent.TOOL_TYPE_FINGER; // TOOL_TYPE_FINGER;
-//                    MotionEvent.PointerCoords mCoords[] = new MotionEvent.PointerCoords[1];
-//                    mCoords[0] = new MotionEvent.PointerCoords();
-//                    mCoords[0].toolMajor = 2;
-//                    mCoords[0].toolMinor = 2;
-//                    mCoords[0].touchMajor = 2;
-//                    mCoords[0].touchMinor = 2;
-//                    mCoords[0].setAxisValue(MotionEvent.AXIS_HSCROLL, (float)(msg.arg1));
-//                    mCoords[0].setAxisValue(MotionEvent.AXIS_VSCROLL, (float)(msg.arg2));
-
-//                    MotionEvent e = MotionEvent.obtain(
-//                            /*mDownTime*/ SystemClock.uptimeMillis(),
-//                            /*eventTime*/ SystemClock.uptimeMillis(),
-//                            /*action*/ MotionEvent.ACTION_SCROLL,
-//                            /*pointerCount*/ 1,
-//                            /*pointerProperties*/ mProperties,
-//                            /*pointerCoords*/ mCoords,
-//                            /*metaState*/ 0,
-//                            /*buttonState*/ 0,
-//                            /*xPrecision*/ 0,
-//                            /*yPrecision*/ 0,
-//                            /*deviceId*/ 0,
-//                            /*edgeFlags*/ 0,
-//                            /*source*/ InputDevice.SOURCE_TOUCHSCREEN, // SOURCE_TOUCHSCREEN,
-//                            /*flags*/ 0);
-
-//                    ((GeckoWebView) viewToScroll).getSession().getPanZoomController().setScrollFactor(1.0f);
-//                    ((GeckoWebView) viewToScroll).getSession().getPanZoomController().onMotionEvent(e);
-
-//                    mCoords[0].setAxisValue(MotionEvent.AXIS_VSCROLL, 0.0f);
-//                    mCoords[0].setAxisValue(MotionEvent.AXIS_HSCROLL, 0.0f);
-
-//                    /*Rect r = new Rect();
-//                    ((GeckoWebView) viewToScroll).getSession().getSurfaceBounds(r);
-//                    Log.i("SCROLLFACTOR", Float.toString(((GeckoWebView) viewToScroll).getSession().getPanZoomController().getScrollFactor()));
-//                    Log.i("SCROLLX", Integer.toString(msg.arg1));
-//                    Log.i("SCROLLY", Integer.toString(msg.arg2));
-//                    Log.i("BOUNDleft", Integer.toString(r.left));
-//                    Log.i("BOUNDtop", Integer.toString(r.top));
-//                    Log.i("BOUNDright", Integer.toString(r.right));
-//                    Log.i("BOUNDbottom", Integer.toString(r.bottom));*/
-//                }
+                viewToScroll.scrollBy(msg.arg1, msg.arg2);
 
                 scrollXList.put(msg.what, viewToScroll.getScrollX());
                 scrollYList.put(msg.what, viewToScroll.getScrollY());
@@ -1335,45 +839,7 @@ public class WebViewManager
                 viewToScroll = findWebViewByTag(msg.what);
 
                 if (viewToScroll != null) {
-                    if (!use_gecko) {
-                        viewToScroll.scrollTo(msg.arg1, msg.arg2);
-                    }
-//                    else {
-//                        MotionEvent.PointerProperties mProperties[] = new MotionEvent.PointerProperties[1];
-//                        mProperties[0] = new MotionEvent.PointerProperties();
-//                        mProperties[0].id = 0;
-//                        mProperties[0].toolType = MotionEvent.TOOL_TYPE_FINGER; // TOOL_TYPE_FINGER;
-//                        MotionEvent.PointerCoords mCoords[] = new MotionEvent.PointerCoords[1];
-//                        mCoords[0] = new MotionEvent.PointerCoords();
-//                        mCoords[0].toolMajor = 2;
-//                        mCoords[0].toolMinor = 2;
-//                        mCoords[0].touchMajor = 2;
-//                        mCoords[0].touchMinor = 2;
-//                        mCoords[0].setAxisValue(MotionEvent.AXIS_HSCROLL, msg.arg1);
-//                        mCoords[0].setAxisValue(MotionEvent.AXIS_VSCROLL, msg.arg2);
-
-//                        MotionEvent e = MotionEvent.obtain(
-//                                /*mDownTime*/ SystemClock.uptimeMillis(),
-//                                /*eventTime*/ SystemClock.uptimeMillis(),
-//                                /*action*/ MotionEvent.ACTION_SCROLL,
-//                                /*pointerCount*/ 1,
-//                                /*pointerProperties*/ mProperties,
-//                                /*pointerCoords*/ mCoords,
-//                                /*metaState*/ 0,
-//                                /*buttonState*/ 0,
-//                                /*xPrecision*/ 0,
-//                                /*yPrecision*/ 0,
-//                                /*deviceId*/ 0,
-//                                /*edgeFlags*/ 0,
-//                                /*source*/ InputDevice.SOURCE_TOUCHSCREEN, // SOURCE_TOUCHSCREEN,
-//                                /*flags*/ 0);
-
-//                        ((GeckoWebView) viewToScroll).getSession().getPanZoomController().setScrollFactor(1.0f);
-//                        ((GeckoWebView) viewToScroll).getSession().getPanZoomController().onMotionEvent(e);
-
-//                        mCoords[0].setAxisValue(MotionEvent.AXIS_VSCROLL, 0.0f);
-//                        mCoords[0].setAxisValue(MotionEvent.AXIS_HSCROLL, 0.0f);
-//                    }
+                    viewToScroll.scrollTo(msg.arg1, msg.arg2);
                 }
 
                 scrollXList.put(msg.what, viewToScroll.getScrollX());
@@ -1409,111 +875,88 @@ public class WebViewManager
                 viewToPress = findWebViewByTag(msg.what);
 
                 if (viewToPress != null) {
-                    if (!use_gecko) {
-                        WebView webView = (WebView) viewToPress;
-                        webView.setWebViewClient(new WebViewClient(){
-                            @Override
-                            public boolean shouldOverrideUrlLoading(WebView view, String url) {
-                                //Log.i("OVERRIDINGURL",url);
-                                hitTestLockList.get((Integer)view.getTag()).lock();
+                    WebView webView = (WebView) viewToPress;
 
-                                view.setWebViewClient(new WebViewClient() {
-                                    @Override
-                                    public boolean shouldOverrideUrlLoading(WebView view, String url) {
-                                        return false;
-                                    }
+                    MotionEvent e = MotionEvent.obtain(
+                            SystemClock.uptimeMillis(), SystemClock.uptimeMillis(),
+                            MotionEvent.ACTION_DOWN, msg.arg1, msg.arg2, 0);
 
-                                    @Override
-                                    public void onPageFinished(WebView view, String url) {
-                                        Integer tag = (Integer) view.getTag();
-                                        urlList.put(tag, view.getUrl());
-                                        urlChangedList.put(tag, true);
-                                    }
-                                });
+                    viewToPress.dispatchTouchEvent(e);
 
-                                hitTestLockList.get((Integer)view.getTag()).unlock();
-                                return true;
-                            }
-                        });
-
-                        //Simulate touch press/release to get hittest
-                        MotionEvent e1 = MotionEvent.obtain(
-                                SystemClock.uptimeMillis(), SystemClock.uptimeMillis(),
-                                MotionEvent.ACTION_DOWN, msg.arg1, msg.arg2, 0);
-                        viewToPress.dispatchTouchEvent(e1);
-                        MotionEvent e2 = MotionEvent.obtain(
-                                SystemClock.uptimeMillis(), SystemClock.uptimeMillis(),
-                                MotionEvent.ACTION_UP, msg.arg1, msg.arg2, 0);
-                        viewToPress.dispatchTouchEvent(e2);
-
-                        //Actual mouse press
+                    // Hit tests
+                    HitTestResult h = webView.getHitTestResult();
+                    if (h.getType() == WebView.HitTestResult.EDIT_TEXT_TYPE) {
                         hitTestLockList.get(msg.what).lock();
-
-                        webView.setWebViewClient(new WebViewClient() {
-                            @Override
-                            public boolean shouldOverrideUrlLoading(WebView view, String url) {
-                                return false;
-                            }
-
-                            @Override
-                            public void onPageFinished(WebView view, String url) {
-                                Integer tag = (Integer) view.getTag();
-                                urlList.put(tag, view.getUrl());
-                                urlChangedList.put(tag, true);
-                            }
-                        });
-                    //repaintRequestedList.put(msg.what, true);
-
-                        MotionEvent e = MotionEvent.obtain(
-                                SystemClock.uptimeMillis(), SystemClock.uptimeMillis(),
-                                MotionEvent.ACTION_DOWN, msg.arg1, msg.arg2, 0);
-
-                        viewToPress.dispatchTouchEvent(e);
+                        String s = "janus://content_editable";
+                        hitTestsList.put(msg.what, s);
                         hitTestLockList.get(msg.what).unlock();
                     }
-//                    else {
-//                        MotionEvent.PointerProperties mProperties[] = new MotionEvent.PointerProperties[1];
-//                        mProperties[0] = new MotionEvent.PointerProperties();
-//                        mProperties[0].id = 0;
-//                        mProperties[0].toolType = MotionEvent.TOOL_TYPE_FINGER; // TOOL_TYPE_FINGER;
-//                        MotionEvent.PointerCoords mCoords[] = new MotionEvent.PointerCoords[1];
-//                        mCoords[0] = new MotionEvent.PointerCoords();
-//                        mCoords[0].toolMajor = 2;
-//                        mCoords[0].toolMinor = 2;
-//                        mCoords[0].touchMajor = 2;
-//                        mCoords[0].touchMinor = 2;
-//                        mCoords[0].x = msg.arg1;
-//                        mCoords[0].y = msg.arg2;
-//                        mCoords[0].pressure = 1.0f;
+                    else {
+                        if (h.getType() == WebView.HitTestResult.SRC_ANCHOR_TYPE || h.getType() == WebView.HitTestResult.IMAGE_TYPE){
+                            //Log.i("HITTESTRESULT", h.getExtra());
+                            if (!(hitTestsList.containsKey(msg.what) && hitTestsList.get(msg.what) == h.getExtra())) {
+                                hitTestLockList.get(msg.what).lock();
+                                if (!hitTestsList.containsKey(msg.what) || hitTestsList.get(msg.what) == ""){
+                                    hitTestsList.put(msg.what, h.getExtra());
+                                }
+                                hitTestLockList.get(msg.what).unlock();
+                                hitTestsList.put(msg.what, h.getExtra());
+                            }
+                        }
+                        else if (h.getType() == WebView.HitTestResult.SRC_IMAGE_ANCHOR_TYPE) {
+                            webView.setWebViewClient(new WebViewClient(){
+                                @Override
+                                public boolean shouldOverrideUrlLoading(WebView view, String url) {
+                                    //Log.i("OVERRIDINGURL",url);
+                                    hitTestLockList.get((Integer)view.getTag()).lock();
+                                    hitTestsList.put((Integer) view.getTag(), url);
 
-//                        MotionEvent e = MotionEvent.obtain(
-//                                /*mDownTime*/ SystemClock.uptimeMillis(),
-//                                /*eventTime*/ SystemClock.uptimeMillis(),
-//                                /*action*/ MotionEvent.ACTION_DOWN,
-//                                /*pointerCount*/ 1,
-//                                /*pointerProperties*/ mProperties,
-//                                /*pointerCoords*/ mCoords,
-//                                /*metaState*/ 0,
-//                                /*buttonState*/ 0,
-//                                /*xPrecision*/ 0,
-//                                /*yPrecision*/ 0,
-//                                /*deviceId*/ 0,
-//                                /*edgeFlags*/ 0,
-//                                /*source*/ InputDevice.SOURCE_TOUCHSCREEN, // SOURCE_TOUCHSCREEN,
-//                                /*flags*/ 0);
+                                    view.setWebViewClient(new WebViewClient() {
+                                        @Override
+                                        public boolean shouldOverrideUrlLoading(WebView view, String url) {
+                                            return false;
+                                        }
 
-//                                Rect r = new Rect();
-//                                ((GeckoWebView) viewToPress).getSession().getSurfaceBounds(r);
-//                                Log.i("PRESSX", Integer.toString(msg.arg1));
-//                                Log.i("PRESSY", Integer.toString(msg.arg2));
-//                                Log.i("BOUNDleft", Integer.toString(r.left));
-//                                Log.i("BOUNDtop", Integer.toString(r.top));
-//                                Log.i("BOUNDright", Integer.toString(r.right));
-//                                Log.i("BOUNDbottom", Integer.toString(r.bottom));
+                                        @Override
+                                        public void onPageFinished(WebView view, String url) {
+                                            Integer tag = (Integer) view.getTag();
 
-//                        ((GeckoWebView) viewToPress).requestFocus();
-//                        ((GeckoWebView) viewToPress).getSession().getPanZoomController().onTouchEvent(e);
-//                    }
+                                            if (webViewLockList.containsKey(tag)) webViewLockList.get(tag).lock();
+                                            else{
+                                                return;
+                                            }
+
+                                            try {
+                                                urlList.put(tag, view.getUrl());
+                                                urlChangedList.put(tag, true);
+
+                                                horizontalRangeList.put(tag, ((AWebView) view).computeHorizontalScrollRange());
+                                                verticalRangeList.put(tag, ((AWebView) view).computeVerticalScrollRange());
+                                            }
+                                            finally {
+                                                if (webViewLockList.containsKey(tag)) webViewLockList.get(tag).unlock();
+                                            }
+                                        }
+                                    });
+
+                                    hitTestLockList.get((Integer)view.getTag()).unlock();
+                                    return true;
+                                }
+                            });
+
+                            //Simulate touch press/release to get hittest
+                            MotionEvent e1 = MotionEvent.obtain(
+                                    SystemClock.uptimeMillis(), SystemClock.uptimeMillis(),
+                                    MotionEvent.ACTION_DOWN, msg.arg1, msg.arg2, 0);
+                            viewToPress.dispatchTouchEvent(e1);
+                            MotionEvent e2 = MotionEvent.obtain(
+                                    SystemClock.uptimeMillis(), SystemClock.uptimeMillis(),
+                                    MotionEvent.ACTION_UP, msg.arg1, msg.arg2, 0);
+                            viewToPress.dispatchTouchEvent(e2);
+                        }
+
+                        webView.zoomOut();
+                    }
                 }
             }
             finally{
@@ -1543,45 +986,10 @@ public class WebViewManager
                 viewToMove = findWebViewByTag(msg.what);
 
                 if (viewToMove != null) {
-                    if (!use_gecko){
-                        MotionEvent e = MotionEvent.obtain(
-                                SystemClock.uptimeMillis(), SystemClock.uptimeMillis(),
-                                MotionEvent.ACTION_MOVE, msg.arg1, msg.arg2, 0);
-                        viewToMove.dispatchTouchEvent(e);
-                    }
-//                    else {
-//                        MotionEvent.PointerProperties mProperties[] = new MotionEvent.PointerProperties[1];
-//                        mProperties[0] = new MotionEvent.PointerProperties();
-//                        mProperties[0].id = 0;
-//                        mProperties[0].toolType = MotionEvent.TOOL_TYPE_FINGER; // TOOL_TYPE_FINGER;
-//                        MotionEvent.PointerCoords mCoords[] = new MotionEvent.PointerCoords[1];
-//                        mCoords[0] = new MotionEvent.PointerCoords();
-//                        mCoords[0].toolMajor = 2;
-//                        mCoords[0].toolMinor = 2;
-//                        mCoords[0].touchMajor = 2;
-//                        mCoords[0].touchMinor = 2;
-//                        mCoords[0].x = msg.arg1;
-//                        mCoords[0].y = msg.arg2;
-//                        mCoords[0].pressure = 1.0f;
-
-//                        MotionEvent e = MotionEvent.obtain(
-//                                /*mDownTime*/ SystemClock.uptimeMillis(),
-//                                /*eventTime*/ SystemClock.uptimeMillis(),
-//                                /*action*/ MotionEvent.ACTION_MOVE,
-//                                /*pointerCount*/ 1,
-//                                /*pointerProperties*/ mProperties,
-//                                /*pointerCoords*/ mCoords,
-//                                /*metaState*/ 0,
-//                                /*buttonState*/ 0,
-//                                /*xPrecision*/ 0,
-//                                /*yPrecision*/ 0,
-//                                /*deviceId*/ 0,
-//                                /*edgeFlags*/ 0,
-//                                /*source*/ InputDevice.SOURCE_TOUCHSCREEN, // SOURCE_TOUCHSCREEN,
-//                                /*flags*/ 0);
-
-//                        ((GeckoWebView) viewToMove).getSession().getPanZoomController().onTouchEvent(e);
-//                    }
+                    MotionEvent e = MotionEvent.obtain(
+                            SystemClock.uptimeMillis(), SystemClock.uptimeMillis(),
+                            MotionEvent.ACTION_MOVE, msg.arg1, msg.arg2, 0);
+                    viewToMove.dispatchTouchEvent(e);
                 }
                 //repaintRequestedList.put(msg.what, true);
             }
@@ -1612,45 +1020,81 @@ public class WebViewManager
                 viewToRelease = findWebViewByTag(msg.what);
 
                 if (viewToRelease != null) {
-                    if (!use_gecko){
-                        MotionEvent e = MotionEvent.obtain(
-                                SystemClock.uptimeMillis(), SystemClock.uptimeMillis(),
-                                MotionEvent.ACTION_UP, msg.arg1, msg.arg2, 0);
-                        viewToRelease.dispatchTouchEvent(e);
-                    }
-//                    else {
-//                        MotionEvent.PointerProperties mProperties[] = new MotionEvent.PointerProperties[1];
-//                        mProperties[0] = new MotionEvent.PointerProperties();
-//                        mProperties[0].id = 0;
-//                        mProperties[0].toolType = MotionEvent.TOOL_TYPE_MOUSE; // TOOL_TYPE_FINGER;
-//                        MotionEvent.PointerCoords mCoords[] = new MotionEvent.PointerCoords[1];
-//                        mCoords[0] = new MotionEvent.PointerCoords();
-//                        mCoords[0].toolMajor = 2;
-//                        mCoords[0].toolMinor = 2;
-//                        mCoords[0].touchMajor = 2;
-//                        mCoords[0].touchMinor = 2;
-//                        mCoords[0].x = msg.arg1;
-//                        mCoords[0].y = msg.arg2;
-//                        mCoords[0].pressure = 1.0f;
+                    MotionEvent e = MotionEvent.obtain(
+                            SystemClock.uptimeMillis(), SystemClock.uptimeMillis(),
+                            MotionEvent.ACTION_UP, msg.arg1, msg.arg2, 0);
+                    viewToRelease.dispatchTouchEvent(e);
+                }
+                //repaintRequestedList.put(msg.what, true);
+            }
+            finally{
+                if (webViewLockList.containsKey(msg.what)) webViewLockList.get(msg.what).unlock();
+            }
+        }
+    };
 
-//                        MotionEvent e = MotionEvent.obtain(
-//                                /*mDownTime*/ SystemClock.uptimeMillis(),
-//                                /*eventTime*/ SystemClock.uptimeMillis(),
-//                                /*action*/ MotionEvent.ACTION_UP,
-//                                /*pointerCount*/ 1,
-//                                /*pointerProperties*/ mProperties,
-//                                /*pointerCoords*/ mCoords,
-//                                /*metaState*/ 0,
-//                                /*buttonState*/ 0,
-//                                /*xPrecision*/ 0,
-//                                /*yPrecision*/ 0,
-//                                /*deviceId*/ 0,
-//                                /*edgeFlags*/ 0,
-//                                /*source*/ InputDevice.SOURCE_MOUSE, // SOURCE_TOUCHSCREEN,
-//                                /*flags*/ 0);
+    public void keyPressWebView(int tag, int code, int state) {
+        Message msg = new Message();
+        msg.what = tag;
+        msg.arg1 = code;
+        msg.arg2 = state;
 
-//                        ((GeckoWebView) viewToRelease).getSession().getPanZoomController().onTouchEvent(e);
-//                    }
+        keyPressWebViewHandler.sendMessage(msg);
+    }
+
+    protected Handler keyPressWebViewHandler = new Handler() {
+        public void handleMessage(Message msg) {
+            if (webViewLockList.containsKey(msg.what)) webViewLockList.get(msg.what).lock();
+            else{
+                keyPressWebViewHandler.sendMessage(msg);
+                return;
+            }
+            try{
+                AWebView viewToPress = null;
+                viewToPress = (AWebView) findWebViewByTag(msg.what);
+
+                if (viewToPress != null) {
+                    KeyEvent e = new KeyEvent(
+                            SystemClock.uptimeMillis(), SystemClock.uptimeMillis(),
+                            KeyEvent.ACTION_DOWN, msg.arg1, 0, msg.arg2);
+
+                    //viewToPress.requestFocus(View.FOCUS_DOWN|View.FOCUS_UP);
+                    viewToPress.dispatchKeyEvent(e);
+                }
+                //repaintRequestedList.put(msg.what, true);
+            }
+            finally{
+                if (webViewLockList.containsKey(msg.what)) webViewLockList.get(msg.what).unlock();
+            }
+        }
+    };
+
+    public void keyReleaseWebView(int tag, int code, int state) {
+        Message msg = new Message();
+        msg.what = tag;
+        msg.arg1 = code;
+        msg.arg2 = state;
+
+        keyReleaseWebViewHandler.sendMessage(msg);
+    }
+
+    protected Handler keyReleaseWebViewHandler = new Handler() {
+        public void handleMessage(Message msg) {
+            if (webViewLockList.containsKey(msg.what)) webViewLockList.get(msg.what).lock();
+            else{
+                keyReleaseWebViewHandler.sendMessage(msg);
+                return;
+            }
+            try{
+                AWebView viewToRelease = null;
+                viewToRelease = (AWebView) findWebViewByTag(msg.what);
+
+                if (viewToRelease != null) {
+                    KeyEvent e = new KeyEvent(
+                            SystemClock.uptimeMillis(), SystemClock.uptimeMillis(),
+                            KeyEvent.ACTION_UP, msg.arg1, 0, msg.arg2);
+                    //viewToRelease.requestFocus(View.FOCUS_DOWN|View.FOCUS_UP);
+                    viewToRelease.dispatchKeyEvent(e);
                 }
                 //repaintRequestedList.put(msg.what, true);
             }
@@ -1703,36 +1147,13 @@ public class WebViewManager
             View wv = (View) webViewsList.get(i);
             if (paused){
                 stopWebView(((Integer)wv.getTag()).intValue());
-                if (!use_gecko){
-                    ((AWebView) wv).loadUrl("about:blank");
-                    ((AWebView) wv).onPause();
-                }
-//                else{
-//                    if (wv != null) {
-//                        GeckoSession session = ((GeckoWebView) wv).releaseSession();
-//                        session.close();
-//                        sessionsList.put(((Integer)wv.getTag()).intValue(), session);
-//                    }
-//                }
+                ((AWebView) wv).loadUrl("about:blank");
+                ((AWebView) wv).onPause();
             }
             else {
-                if (!use_gecko){
-                    int tag = ((Integer)wv.getTag()).intValue();
-                    ((AWebView) wv).loadUrl(urlList.get(tag));
-                    ((AWebView) wv).onResume();
-                }
-//                else{
-//                    GeckoSession s = sessionsList.get(((Integer)wv.getTag()).intValue());
-//                    if (wv != null  && s != null && !((((GeckoWebView) wv).getSession()).equals(s))) {
-//                        int tag = ((Integer)wv.getTag()).intValue();
-
-//                        ((GeckoWebView) wv).releaseSession();
-//                        s.open(geckoRuntime);
-//                        ((GeckoWebView) wv).setSession(s);
-//                        s.loadUri(urlList.get(tag));
-//                        sessionsList.put(tag, null);
-//                    }
-//                }
+                int tag = ((Integer)wv.getTag()).intValue();
+                ((AWebView) wv).loadUrl(urlList.get(tag));
+                ((AWebView) wv).onResume();
                 reloadWebView(((Integer)wv.getTag()).intValue());
             }
         }

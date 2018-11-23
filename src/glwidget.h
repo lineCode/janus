@@ -107,16 +107,14 @@ private:
     GLsizei m_cube_face_height;
 
     QPointer <Game> game;
-    QPointer <AbstractHMDManager> hmd_manager;
-
-    QTime deltat_time;
+    QPointer <AbstractHMDManager> hmd_manager;   
 
     static bool novsync;
     static DisplayMode disp_mode;
 
     std::shared_ptr<TextureHandle> m_equi_cubemap_handle;
 
-    std::vector<VirtualCamera> cameras;
+    QVector<VirtualCamera> cameras;
 };
 
 #endif // GLWIDGET_H

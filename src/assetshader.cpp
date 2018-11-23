@@ -3,7 +3,7 @@
 AssetShader::AssetShader() :
     m_program_handle(nullptr)
 {       
-    SetS("_type", "assetshader");
+    props->SetType(TYPE_ASSETSHADER);
     time.start();
 }
 
@@ -12,7 +12,7 @@ void AssetShader::SetSrc(const QString & base, const QString & src, const QStrin
     Asset::SetSrc(base, src);
     vertex_src_url_str = vertex_src;
     if (!vertex_src.isEmpty()) {
-        vertex_src_url = QUrl(GetS("_base_url")).resolved(vertex_src);
+        vertex_src_url = QUrl(props->GetBaseURL()).resolved(vertex_src);
     }
 //    qDebug() << "AssetShader::SetSrc" << this << GetS("_src_url") << vertex_src_url;
 }
@@ -20,8 +20,8 @@ void AssetShader::SetSrc(const QString & base, const QString & src, const QStrin
 void AssetShader::Load()
 {
 //    qDebug() << "AssetShader::Load()" << this << GetS("_src_url");
-    if (!GetS("_src_url").isEmpty()) {
-        WebAsset::Load(QUrl(GetS("_src_url")));
+    if (!props->GetSrcURL().isEmpty()) {
+        WebAsset::Load(QUrl(props->GetSrcURL()));
     }
     else {
         SetLoaded(true);
@@ -95,7 +95,7 @@ void AssetShader::CompileShaderProgram()
         *vertex_data = QByteArray(vertex_src_bytearray.data());
     }
 
-    m_program_handle = RendererInterface::m_pimpl->CompileAndLinkShaderProgram(vertex_data, vertex_src_url_str, fragment_data, GetS("_src_url"));
+    m_program_handle = RendererInterface::m_pimpl->CompileAndLinkShaderProgram(vertex_data, vertex_src_url_str, fragment_data, props->GetSrcURL());
 }
 
 void AssetShader::SetProgramHandle(std::shared_ptr<ProgramHandle> p_shader_program)
@@ -320,7 +320,7 @@ void AssetShader::SetUseSkelAnim(const bool b)
     mObject.iUseFlags[0] = b ? 1.0f : 0.0f;
 }
 
-void AssetShader::SetSkelAnimJoints(const std::vector<QMatrix4x4> & m)
+void AssetShader::SetSkelAnimJoints(const QVector <QMatrix4x4> & m)
 {
     size_t const matrix_count = m.size();
     mObject.iSkelAnimJoints.clear();

@@ -1091,6 +1091,22 @@ QString MathUtil::GetAABBAsString(const QPair <QVector3D, QVector3D> & v, const 
     }
 }
 
+QString MathUtil::GetRectangleAsString(const QRectF & r, const bool add_quotes)
+{
+    if (add_quotes) {
+        return "\"" + GetNumber(r.x()) + " " +
+                GetNumber(r.y()) + " " +
+                GetNumber(r.x() + r.width()) + " " +
+                GetNumber(r.y() + r.height()) + "\"";
+    }
+    else {
+        return GetNumber(r.x()) + " " +
+                GetNumber(r.y()) + " " +
+                GetNumber(r.x() + r.width()) + " " +
+                GetNumber(r.y() + r.height());
+    }
+}
+
 QString MathUtil::GetEnumAsString(const GLenum e, const bool add_quotes)
 {
     QString s;
@@ -1133,6 +1149,24 @@ QString MathUtil::GetRectAsString(const QRectF & r, const bool add_quotes)
     }
 }
 
+QVector3D MathUtil::GetVectorFromQVariant(const QVariant v)
+{
+    ScriptableVector * v0 = qvariant_cast<ScriptableVector *>(v);
+    return (v0 ? v0->toQVector3D() : GetStringAsVector(v.toString()));
+}
+
+QVector4D MathUtil::GetVector4FromQVariant(const QVariant v)
+{
+    ScriptableVector * v0 = qvariant_cast<ScriptableVector *>(v);
+    return (v0 ? v0->toQVector4D() : GetStringAsVector4(v.toString()));
+}
+
+QVector4D MathUtil::GetColourFromQVariant(const QVariant v)
+{
+    ScriptableVector * v0 = qvariant_cast<ScriptableVector *>(v);
+    return (v0 ? (v0->toQVector4D()) : MathUtil::GetColourAsVector4(GetStringAsColour(v.toString())));
+}
+
 QVector3D MathUtil::GetStringAsVector(const QString & s)
 {
     QString s2 = s.trimmed();
@@ -1157,6 +1191,19 @@ QVector4D MathUtil::GetStringAsVector4(const QString & s)
 	else {
 		return QVector4D(0, 0, 0, 0);
 	}
+}
+
+QColor MathUtil::GetVector4AsColour(const QVector4D v)
+{
+    return QColor(int(qMin(1.0f, qMax(0.0f, v.x())) * 255.0f),
+                  int(qMin(1.0f, qMax(0.0f, v.y())) * 255.0f),
+                  int(qMin(1.0f, qMax(0.0f, v.z())) * 255.0f),
+                  int(qMin(1.0f, qMax(0.0f, v.w())) * 255.0f));
+}
+
+QVector4D MathUtil::GetColourAsVector4(const QColor c)
+{
+    return QVector4D(qMin(1.0, qMax(0.0, c.redF())), qMin(1.0, qMax(0.0, c.greenF())), qMin(1.0, qMax(0.0, c.blueF())), qMin(1.0, qMax(0.0, c.alphaF())));
 }
 
 QColor MathUtil::GetStringAsColour(const QString & s)
@@ -2423,8 +2470,7 @@ QString MathUtil::GetSaveTimestampFilename()
     return MathUtil::GetWorkspacePath() + "out-" + MathUtil::GetCurrentDateTimeAsString() + ".html";
 }
 
-
-QString MathUtil::AssetTypeFromFilename(const QString filename)
+ElementType MathUtil::AssetTypeFromFilename(const QString filename)
 {
     //make lowercase, strip the .gz if present
     QString s = filename.toLower().trimmed();
@@ -2435,34 +2481,34 @@ QString MathUtil::AssetTypeFromFilename(const QString filename)
 
 //    qDebug() << "AssetTypeFromFilename testing suffix" << filename << suffix;
     if (MathUtil::img_extensions.contains(suffix)) {
-        return "assetimage";
+        return TYPE_ASSETIMAGE;
     }
     else if (MathUtil::sound_extensions.contains(suffix)) {
-        return "assetsound";
+        return TYPE_ASSETSOUND;
     }
     else if (MathUtil::vid_extensions.contains(suffix)) {
-        return "assetvideo";
+        return TYPE_ASSETVIDEO;
     }
     else if (MathUtil::geom_extensions.contains(suffix)) {
-        return "assetobject";
+        return TYPE_ASSETOBJECT;
     }
     else if (suffix == "js") {
-        return "assetscript";
+        return TYPE_ASSETSCRIPT;
     }
     else if (suffix == "txt") {
-        return "assetghost";
+        return TYPE_ASSETGHOST;
     }
     else if (suffix == "frag" || suffix == "vert") {
-        return "assetshader";
+        return TYPE_ASSETSHADER;
     }
     else if (suffix == "html" || suffix == "htm" || suffix == "pdf") {
-        return "assetwebsurface";
+        return TYPE_ASSETWEBSURFACE;
     }
     else if (suffix == "rec") {
-        return "assetrecording";
+        return TYPE_ASSETRECORDING;
     }    
     else { //if format is unrecognized or all else, assume an image
-        return "asseterror";
+        return TYPE_ERROR;
     }
 }
 

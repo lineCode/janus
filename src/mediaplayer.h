@@ -24,7 +24,7 @@ class MediaPlayer;
 struct MediaContext
 {
     //Texture info
-    std::shared_ptr<TextureHandle> m_texture_handles[2];
+    std::shared_ptr<TextureHandle> m_texture_handles[2] = {nullptr,nullptr};
 
     //Mouse info
     bool cursor_active = false;
@@ -40,9 +40,9 @@ struct MediaContext
 
     //Video info
     QMutex video_lock;
-    QImage img[2];
-    int video_width = 1080;
-    int video_height = 720;
+    QImage * img[2] = {nullptr,nullptr};
+    unsigned int video_width = 1080;
+    unsigned int video_height = 720;
 
     bool sbs3d = false;
     bool ou3d = false;
@@ -59,12 +59,13 @@ struct MediaContext
     QVector3D vel = QVector3D(0,0,0);
     float dist = 0.0f;
     float gain = 1.0f;
+    float doppler_factor = 1.0f;
     float pitch = 1.0f;
     bool positional_sound = true;
 
     ALuint openal_source = 0;
     bool playing = false;
-    QList <ALuint> buffer_queue;
+    QList <ALuint> * buffer_queue = nullptr;
 
     bool audio_only = false;
     bool loop = false;

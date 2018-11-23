@@ -22,7 +22,7 @@ void GeomData::AddTriangle(const QString mat, uint32_t const mesh_UUID, GeomTria
         materials[mat].triangles.resize(mesh_UUID + 1);
         materials[mat].triangles[mesh_UUID].reserve(256);
     }
-    materials[mat].triangles[mesh_UUID].emplace_back(t);
+    materials[mat].triangles[mesh_UUID].push_back(t);
 }
 
 void GeomData::SetTextureFilename(const QString mat, const unsigned int channel, const QString filename)
@@ -79,11 +79,11 @@ GeomMaterial & GeomData::GetMaterial(const QString mat)
     return materials[mat];
 }
 
-std::vector<GeomTriangle> & GeomData::GetTriangles(const QString mat, uint32_t const mesh_UUID)
+QVector<GeomTriangle> & GeomData::GetTriangles(const QString mat, uint32_t const mesh_UUID)
 {
     if (materials[mat].triangles.size() <= mesh_UUID)
     {
-        materials[mat].triangles.emplace_back(std::vector<GeomTriangle>());
+        materials[mat].triangles.push_back(QVector<GeomTriangle>());
     }
     return materials[mat].triangles[mesh_UUID];
 }
@@ -92,7 +92,7 @@ GeomVBOData & GeomData::GetVBOData(const QString mat, uint32_t const mesh_UUID)
 {
     if (materials[mat].vbo_data.size() <= mesh_UUID)
     {
-        materials[mat].vbo_data.emplace_back(GeomVBOData());
+        materials[mat].vbo_data.push_back(GeomVBOData());
     }
     return materials[mat].vbo_data[mesh_UUID];
 }
@@ -237,17 +237,15 @@ void GeomIOSystem::SetBasePath(QUrl u)
 
 void GeomIOSystem::Clear()
 {
-    mutex.lock();
     for (int i=0; i<streams.size(); ++i) {
         delete streams[i];
         streams[i] = NULL;
     }
     streams.clear();
-    mutex.unlock();
     data_cache.clear();
 }
 
-void GeomIOSystem::SetMTLFilePath(const QString & s)
+void GeomIOSystem:: SetMTLFilePath(const QString & s)
 {
     mtl_file_path = s;
 }
@@ -263,7 +261,6 @@ float GeomIOSystem::UpdateRequests()
     int num_streams = 0;
     float progress = 0.0f;
 
-    mutex.lock();
     for (int i=0; i<streams.size(); ++i) {
 //        qDebug() << "  i" << i << streams[i] << streams[i]->GetUrl() << streams[i]->GetWebAsset();
         if (streams[i] && streams[i]->GetWebAsset().isNull()) {
@@ -277,7 +274,6 @@ float GeomIOSystem::UpdateRequests()
             progress += streams[i]->GetWebAsset()->GetProgress();
         }
     }
-    mutex.unlock();
 
     return (num_streams == 0)?0.0f:progress / float(num_streams);
 }
@@ -297,7 +293,7 @@ Assimp::IOStream * GeomIOSystem::Open(const std::string & pFile, const std::stri
 
 Assimp::IOStream * GeomIOSystem::Open(const char *pFile)
 {
-//    qDebug() << "GeomIOSystem::Open" << base_path.toString() << pFile << mtl_file_path;
+//    qDebug() << "GeomIOSystem::Open" << this << base_path.toString() << pFile << mtl_file_path << gzipped;
     QString p(pFile);
     QUrl u;
 
@@ -340,10 +336,8 @@ Assimp::IOStream * GeomIOSystem::Open(const char *pFile)
         return s;
     }
 
-    mutex.lock();
     streams.push_back(s);
 //    qDebug() << " pushed back stream" << streams.size();
-    mutex.unlock();
 
     // Wait if webasset is null, hasn't started, or has started and is running and not loaded or with error
 //    qDebug() << "GeomIOSystem::Open started" << this;
@@ -373,6 +367,13 @@ Assimp::IOStream * GeomIOSystem::Open(const char *pFile)
         if (w->GetRedirected() && QString(pFile).right(4) != w->GetURL().toString().right(4)) {
             w->ClearData();
         }
+        else if (u_str.right(7).toLower().contains(".obj") && !mtl_file_path.isEmpty()) {
+            //61.0 mtllib override
+            QByteArray b = w->GetData();
+            if (!b.left(1000).contains("mtllib ")) {
+                w->SetData(QString("mtllib " + mtl_file_path + "\n").toLatin1() + b);
+            }
+        }
 
         //cache the data if fetched again
         if (!data_cache.contains(u_str)) {
@@ -389,10 +390,8 @@ Assimp::IOStream * GeomIOSystem::Open(const char *pFile)
             data_cache[u_str] = QByteArray();
         }
 
-        mutex.lock();
         streams.removeOne(s); // Remove the stream if it failed so we don't try to update it later.
         delete s;
-        mutex.unlock();
     }
     return NULL;
 }
@@ -400,7 +399,6 @@ Assimp::IOStream * GeomIOSystem::Open(const char *pFile)
 void GeomIOSystem::Close(Assimp::IOStream *pFile)
 {
 //    qDebug() << "GeomIOSystem::Close" << this << streams.size();
-    mutex.lock();
     for (int i=0; i<streams.size(); ++i) {
         if (streams[i].data() == pFile) {
 //            qDebug() << "GeomIOSystem::Close" << this << streams.size();
@@ -412,7 +410,6 @@ void GeomIOSystem::Close(Assimp::IOStream *pFile)
 //    if (dynamic_cast<GeomIOStream *>(pFile)) {
 //        dynamic_cast<GeomIOStream *>(pFile)->Close();
 //    }
-    mutex.unlock();
 }
 
 bool GeomIOSystem::ComparePaths(const char *one, const char *second) const
@@ -474,7 +471,8 @@ Geom::Geom() :
     uses_tex_file(false),
     cur_time(0.0),
     anim_speed(1.0f),
-    loop(false)
+    loop(false),
+    started(false)
 {
 //    qDebug() << "Geom::Geom()" << this;
     time.start();
@@ -507,6 +505,11 @@ void Geom::SetReady(const bool b)
 bool Geom::GetReady() const
 {
     return ready;
+}
+
+bool Geom::GetStarted() const
+{
+    return started;
 }
 
 float Geom::GetProgress() const
@@ -687,6 +690,11 @@ bool Geom::GetHasMeshData() const
 void Geom::Load()
 {
 //    qDebug() << "Geom::Load()" << this << path;
+    if (started || ready) {
+        return;
+    }
+
+    started = true;
 
     //C++ method with IO handlers (load files from network)
     bool gzipped = false;
@@ -696,9 +704,11 @@ void Geom::Load()
         gzipped = true;
     }
 
-    iosystem->SetGZipped(gzipped);
-    iosystem->SetBasePath(QUrl(p));
-    importer.SetIOHandler(iosystem);
+    if (iosystem) {
+        iosystem->SetGZipped(gzipped);
+        iosystem->SetBasePath(QUrl(p));
+        importer.SetIOHandler(iosystem);
+    }
     //scene = importer.ReadFile(base_path.toLocal8Bit().data(), aiProcessPreset_TargetRealtime_Fast);
     auto post_process_flags =
         aiProcess_LimitBoneWeights
@@ -764,6 +774,7 @@ void Geom::Unload()
         scene = nullptr;
     }*/
     ready = false;
+    started = false;
     error = false;
     textures_started = false;
     textures_ready = false;
@@ -834,16 +845,16 @@ void Geom::Update()
                     memcpy(mat.textures[j].ba.data(), t->pcData, size_data);
 
                     QPointer <AssetImage> new_img = new AssetImage();
-                    new_img->SetB("tex_clamp", tex_clamp);
-                    new_img->SetB("tex_linear", tex_linear);
-                    new_img->SetB("tex_compress", tex_compress);
-                    new_img->SetB("tex_mipmap", tex_mipmap);
-                    new_img->SetB("tex_premultiply", (j == 0) ? tex_premultiply : false);
-                    new_img->SetS("tex_alpha", (j == 0) ? tex_alpha : "none");
+                    new_img->GetProperties()->SetTexClamp(tex_clamp);
+                    new_img->GetProperties()->SetTexLinear(tex_linear);
+                    new_img->GetProperties()->SetTexCompress(tex_compress);
+                    new_img->GetProperties()->SetTexMipmap(tex_mipmap);
+                    new_img->GetProperties()->SetTexPremultiply((j == 0) ? tex_premultiply : false);
+                    new_img->GetProperties()->SetTexAlpha((j == 0) ? tex_alpha : "none");
                     // We use linear colorspace for data textures like roughness, normals, heightmaps etc.
                     // We set texture 2-Specular/3-Normal/4-Height/7-DetailMask to linear as they are data-textures which should have
                     // linear data stored in them (i.e. 8-bit 128 grey is half-smoothness)
-                    new_img->SetS("tex_colorspace", (j == 0 || j == 1 || j == 5 || j == 6 || j == 8) ? tex_colorspace : "linear");
+                    new_img->GetProperties()->SetTexColorspace((j == 0 || j == 1 || j == 5 || j == 6 || j == 8) ? tex_colorspace : "linear");
                     new_img->SetSrc(path, s+"."+QString(scene->mTextures[tex_index]->achFormatHint));
                     new_img->CreateFromData(mat.textures[j].ba);
 //                    qDebug() << "TEXTURE1!" << path << s+"."+QString(scene->mTextures[tex_index]->achFormatHint);
@@ -852,13 +863,13 @@ void Geom::Update()
                 }
                 else if (!s.isEmpty()) {
                     QPointer <AssetImage> new_img = new AssetImage();
-                    new_img->SetB("tex_clamp", tex_clamp);
-                    new_img->SetB("tex_linear", tex_linear);
-                    new_img->SetB("tex_compress", tex_compress);
-                    new_img->SetB("tex_mipmap", tex_mipmap);
-                    new_img->SetB("tex_premultiply", (j == 0) ? tex_premultiply : false);
-                    new_img->SetS("tex_alpha", (j == 0) ? tex_alpha : "none");
-                    new_img->SetS("tex_colorspace", (j == 0 || j == 1 || j == 5 || j == 6 || j == 8) ? tex_colorspace : "linear");
+                    new_img->GetProperties()->SetTexClamp(tex_clamp);
+                    new_img->GetProperties()->SetTexLinear(tex_linear);
+                    new_img->GetProperties()->SetTexCompress(tex_compress);
+                    new_img->GetProperties()->SetTexMipmap(tex_mipmap);
+                    new_img->GetProperties()->SetTexPremultiply((j == 0) ? tex_premultiply : false);
+                    new_img->GetProperties()->SetTexAlpha((j == 0) ? tex_alpha : "none");
+                    new_img->GetProperties()->SetTexColorspace((j == 0 || j == 1 || j == 5 || j == 6 || j == 8) ? tex_colorspace : "linear");
                     new_img->SetSrc(s, s);
                     new_img->Load();
 //                    qDebug() << "TEXTURE2!" << s;
@@ -927,7 +938,9 @@ void Geom::Update()
     }
     else if (!ready || !textures_ready) {
 //        qDebug() << "Geom::Update() update iorequests" << path;
-        progress = iosystem->UpdateRequests();
+        if (iosystem) {
+            progress = iosystem->UpdateRequests();
+        }
     }
 
     if (ready) {
@@ -958,7 +971,9 @@ bool Geom::UpdateGL()
 void Geom::SetMTLFile(const QString & s)
 {
     mtl_file_path = s;
-    iosystem->SetMTLFilePath(s);
+    if (iosystem) {
+        iosystem->SetMTLFilePath(s);
+    }
 }
 
 void Geom::SetMaterialTexture(const QString & tex_url, const int channel)
@@ -1013,13 +1028,18 @@ void Geom::DrawGL(QPointer <AssetShader> shader, const QColor col, const bool ov
         //58.0 - Change diffuse only when lighting is enabled (or some surfaces, menu/websurface, appear dark),
         //later change to restore since it causes inconsistent behaviour
         //changes again, this time to not use it if there's a texture override (this should work ok)
-        if (textures[0].img.isNull()&& !override_texture)
+        if (textures[0].img.isNull() && !override_texture)
         {
             shader->SetDiffuse(QVector4D(mat.kd.redF(), mat.kd.greenF(), mat.kd.blueF(), mat.kd.alphaF()));
         }
         else
         {
-            shader->SetDiffuse(QVector4D(1,1,1,1));
+            if (mat.kd.alphaF() != 0.0f) {
+                shader->SetDiffuse(QVector4D(1, 1, 1, mat.kd.alphaF())); //61.0 - support transparency (d value in OBJ .mtl)
+            }
+            else {
+                shader->SetDiffuse(QVector4D(1, 1, 1, 1)); //61.0 - support transparency (d value in OBJ .mtl)
+            }
         }
 
         if (textures[1].img.isNull())
@@ -1238,19 +1258,19 @@ void Geom::PrepareVBOs()
 
     /* draw all meshes assigned to this node */
     //iterate through everything
-    std::vector<aiNode*> nodes_to_process;
+    QVector<aiNode*> nodes_to_process;
     nodes_to_process.reserve(1024);
-    std::vector<QMatrix4x4> nodes_parent_xforms;
+    QVector<QMatrix4x4> nodes_parent_xforms;
     nodes_parent_xforms.reserve(1024);
-    std::vector<int> node_depth;
+    QVector<int> node_depth;
     node_depth.reserve(1024);
     node_list.reserve(1024);
 
     if (scene->mRootNode)
     {
-        nodes_to_process.emplace_back(scene->mRootNode);
-        nodes_parent_xforms.emplace_back(QMatrix4x4());
-        node_depth.emplace_back(0);
+        nodes_to_process.push_back(scene->mRootNode);
+        nodes_parent_xforms.push_back(QMatrix4x4());
+        node_depth.push_back(0);
 
         m_globalInverseTransform = aiToQMatrix4x4(scene->mRootNode->mTransformation).inverted();
     }
@@ -1278,7 +1298,7 @@ void Geom::PrepareVBOs()
 //            qDebug() << "Adding bone!" << nd->mName.C_Str() << "index" << node_list.size();
             const QString node_name = GetProcessedNodeName(nd->mName.C_Str());
             bone_to_node[node_name] = node_list.size();
-            node_list.emplace_back(nd);
+            node_list.push_back(nd);
 
 //            if (base_path.contains("elvis")) {
 //                QString s;
@@ -1294,17 +1314,17 @@ void Geom::PrepareVBOs()
         {
             if (nd->mChildren[n])
             {
-                nodes_to_process.emplace_back(nd->mChildren[n]);
-                nodes_parent_xforms.emplace_back(m);
-                node_depth.emplace_back(n_depth+1);
+                nodes_to_process.push_back(nd->mChildren[n]);
+                nodes_parent_xforms.push_back(m);
+                node_depth.push_back(n_depth+1);
             }
         }
     }
 
     if (scene->mRootNode)
     {
-        nodes_to_process.emplace_back(scene->mRootNode);
-        nodes_parent_xforms.emplace_back(QMatrix4x4());
+        nodes_to_process.push_back(scene->mRootNode);
+        nodes_parent_xforms.push_back(QMatrix4x4());
     }
 
     //on second pass, process meshes
@@ -1371,7 +1391,7 @@ void Geom::PrepareVBOs()
             GeomMaterial & mat = data.GetMaterial(mat_name);
             bool mesh_has_been_processed = false;
             size_t mesh_index = mat.mesh_keys.size();
-            for (std::pair<uint32_t, size_t>& mesh_key : mat.mesh_keys)
+            for (QPair<uint32_t, size_t>& mesh_key : mat.mesh_keys)
             {
                 if (mesh_key.first == nd->mMeshes[n])
                 {
@@ -1527,7 +1547,7 @@ void Geom::PrepareVBOs()
                     float weight;
                 };
 
-                std::unordered_map<uint32_t, std::vector<VertexBoneInfo>> bone_info;
+                QHash<uint32_t, QVector<VertexBoneInfo>> bone_info;
 
                 // Prepare Bone weights and indices
                 for (uint32_t bone_index = 0; bone_index < mesh->mNumBones; ++bone_index)
@@ -1560,7 +1580,7 @@ void Geom::PrepareVBOs()
                 // Skel anim indices and weights
                 for (uint32_t vertex_index = 0; vertex_index < num_verts; ++vertex_index)
                 {
-                    std::vector<VertexBoneInfo>& bones = bone_info[vertex_index];
+                    QVector<VertexBoneInfo>& bones = bone_info[vertex_index];
 
                     auto const bone_count = bones.size();
                     if (bone_count != 0)
@@ -1626,11 +1646,11 @@ void Geom::PrepareVBOs()
                 } // for (uint32_t vertex_index = 0; vertex_index < num_verts; ++vertex_index)
 
                 // Store key as we need this for parsing in the physics code
-                mat.mesh_keys.emplace_back(std::pair<uint32_t, size_t>(nd->mMeshes[n], mesh_index));
+                mat.mesh_keys.push_back(QPair<uint32_t, size_t>(nd->mMeshes[n], mesh_index));
             } // if (mesh_has_been_processed == false)
 
             // Add new transform for this mesh this is the object-space to instance-space transform for this instance
-            vbo_data.m_instance_transforms.emplace_back(m);
+            vbo_data.m_instance_transforms.push_back(m);
             // Increment nTris by the triangle count of this mesh if we are creating a new instance of it.
             // TODO: Perhaps this should store the number of triangles loaded rather than drawn, as that number will vary
             // when I implement working frustum-culling and/or other triangle culling techniques.
@@ -1641,20 +1661,15 @@ void Geom::PrepareVBOs()
         {
             if (nd->mChildren[n])
             {
-                nodes_to_process.emplace_back(nd->mChildren[n]);
-                nodes_parent_xforms.emplace_back(m);
+                nodes_to_process.push_back(nd->mChildren[n]);
+                nodes_parent_xforms.push_back(m);
             }
         }
     }
 
     nodes_to_process.clear();
-    nodes_to_process.shrink_to_fit();
-
     nodes_parent_xforms.clear();
-    nodes_parent_xforms.shrink_to_fit();
-
     node_depth.clear();
-    node_depth.shrink_to_fit();
 
     ready = true;
 }
@@ -1729,9 +1744,10 @@ void Geom::get_bounding_box_for_node(const struct aiNode* nd,
 
 void Geom::SetupMaterialPath(const struct aiMaterial *mtl, GeomMaterial & mat, aiTextureType t, const int i)
 {
+//    qDebug() << "Geom::SetupMaterialPath mtlfilepath" << mtl_file_path;
     aiString texturePath;
     mtl->GetTexture(t, 0, &texturePath);
-//    qDebug() << "Geom::SetupMaterialPath" << i << texturePath.C_Str();
+//    qDebug() << "Geom::SetupMaterialPath" << mtl_file_path << i << texturePath.C_Str();
     if (t != aiTextureType_NONE && mtl->GetTextureCount(t) > 0 && mtl->GetTexture(t, 0, &texturePath) == AI_SUCCESS)
     {        
         const QString s(texturePath.C_Str());
@@ -1752,6 +1768,7 @@ void Geom::SetupMaterialPath(const struct aiMaterial *mtl, GeomMaterial & mat, a
             }
         }
         mat.textures[i].filename = u.resolved(s).toString();
+//        qDebug() << "Geom::SetupMaterialPath" << mat.textures[i].filename;
     }
 }
 
@@ -2008,8 +2025,8 @@ void Geom::CalculateFinalPoses()
     //iterate over nodes of BASE OBJECT
     if (scene->mRootNode)
     {
-        nodes_to_process.emplace_back(scene->mRootNode);
-        nodes_parent_xforms.emplace_back(QMatrix4x4());
+        nodes_to_process.push_back(scene->mRootNode);
+        nodes_parent_xforms.push_back(QMatrix4x4());
     }
 
     //on first pass, set up node hierarchy and node indexes for whole scene
@@ -2113,8 +2130,8 @@ void Geom::CalculateFinalPoses()
         for (unsigned int n = 0; n < nd->mNumChildren; ++n) {
             if (nd->mChildren[n])  {
 //                qDebug() << node_name << nd->mChildren[n]->mName.C_Str();
-                nodes_to_process.emplace_back(nd->mChildren[n]);
-                nodes_parent_xforms.emplace_back(globalTransform);
+                nodes_to_process.push_back(nd->mChildren[n]);
+                nodes_parent_xforms.push_back(globalTransform);
             }
         }
     }

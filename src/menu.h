@@ -26,7 +26,6 @@ public:
     Q_PROPERTY(QVariantList playerlist MEMBER playerlist)
     Q_PROPERTY(QString userid READ getuserid WRITE setuserid)
     Q_PROPERTY(bool avatarlighting READ getavatarlighting WRITE setavatarlighting)    
-    Q_PROPERTY(QVariantMap selected_asset READ getselectedasset)
     Q_PROPERTY(QVariantList partymodedata READ getpartymodedata)
     Q_PROPERTY(QVariantList populardata READ getpopulardata)
     Q_PROPERTY(bool hmd MEMBER hmd)
@@ -38,7 +37,7 @@ public:
 
     Q_INVOKABLE QString currenturl() {
         if (player_curroom) {
-            return player_curroom->property("url").toString();
+            return player_curroom->GetProperties()->GetURL();
         }
         return "";
     }
@@ -52,14 +51,14 @@ public:
 
     Q_INVOKABLE int locked() {
         if (player_curroom) {
-            return (player_curroom->property("locked").toString().toLower() == "true") ? 1 : 0;
+            return (player_curroom->GetProperties()->GetLocked() ? 1 : 0);
         }
         return false;
     }
 
     Q_INVOKABLE bool roompartymode() {
         if (player_curroom) {
-            return (player_curroom->property("party_mode").toString().toLower() == "true");
+            return (player_curroom->GetProperties()->GetPartyMode());
         }
         return false;
     }
@@ -151,12 +150,12 @@ public:
 
         userid = s;
         if (player) {
-            player->SetS("userid", s);
+            player->GetProperties()->SetUserID(s);
         }
         if (multi_players != nullptr && env != nullptr) {
             QPointer <RoomObject> user_ghost = multi_players->GetPlayer();
             if (user_ghost) {
-                user_ghost->SetS("id", s);
+                user_ghost->GetProperties()->SetID(s);
 
                 multi_players->DoUpdateAvatar();
 
@@ -170,7 +169,7 @@ public:
 
     Q_INVOKABLE QString getuserid() {
         if (player) {
-            userid = player->GetS("userid");
+            userid = player->GetProperties()->GetUserID();
         }
         return userid;
     }
@@ -179,7 +178,7 @@ public:
         if (multi_players != nullptr && env != nullptr) {
             QPointer <RoomObject> user_ghost = multi_players->GetPlayer();
             if (user_ghost) {
-                user_ghost->SetB("lighting", b);
+                user_ghost->GetProperties()->SetLighting(b);
                 multi_players->DoUpdateAvatar();
             }
         }
@@ -189,7 +188,7 @@ public:
         if (multi_players) {
             QPointer <RoomObject> user_ghost = multi_players->GetPlayer();
             if (user_ghost) {
-                return user_ghost->GetB("lighting");
+                return user_ghost->GetProperties()->GetLighting();
             }
         }
         return false;
@@ -230,30 +229,30 @@ public:
 
     Q_INVOKABLE void createasset(QString asset_type, QVariantMap property_list, const bool do_sync=true) {
 //        qDebug() << "createasset" << asset_type << property_list;
-        if (player_curroom && (!player_curroom->GetB("locked") || !do_sync)) {
+        if (player_curroom && (!player_curroom->GetProperties()->GetLocked() || !do_sync)) {
             player_curroom->AddAsset(asset_type, property_list, do_sync);
         }
     }
 
     Q_INVOKABLE void createobject(QString object_type, QVariantMap property_list, const bool do_sync=true) {
 //        qDebug() << "createobject" << object_type << property_list;
-        if (player_curroom && (!player_curroom->GetB("locked") || !do_sync)) {
+        if (player_curroom && (!player_curroom->GetProperties()->GetLocked() || !do_sync)) {
 
             //different way of adding to room if it's a link, not a RoomObject
             if (object_type.toLower() == "link") {
                 QPointer <RoomObject> new_portal = new RoomObject();
-                new_portal->SetType("link");
+                new_portal->SetType(TYPE_LINK);
                 new_portal->SetProperties(property_list);
-                new_portal->SetURL(player_curroom->GetS("url"), property_list["url"].toString());
+                new_portal->SetURL(player_curroom->GetProperties()->GetURL(), property_list["url"].toString());
                 new_portal->SetTitle(property_list["title"].toString());
 
                 player_curroom->AddRoomObject(new_portal);
             }
             else {                                
                 QPointer <RoomObject> o = new RoomObject();
-                o->SetType(object_type);
+                o->SetType(DOMNode::StringToElementType(object_type.toLower()));
                 o->SetProperties(property_list);
-                o->SetB("sync", false);
+                o->GetProperties()->SetSync(false);
                 o->PlayCreateObject();
                 player_curroom->AddRoomObject(o);
             }
@@ -262,7 +261,7 @@ public:
 
     Q_INVOKABLE void removeobject(QString js_id, const bool do_sync=true) {
 //        qDebug() << "removeobject" << js_id << do_sync;
-        if (player_curroom && (!player_curroom->GetB("locked") || !do_sync)) {
+        if (player_curroom && (!player_curroom->GetProperties()->GetLocked() || !do_sync)) {
             QPointer <RoomObject> o = player_curroom->GetRoomObject(js_id);
             if (o) {
                 const QString delete_obj_code = o->GetXMLCode();
@@ -271,28 +270,6 @@ public:
                 }
             }
         }
-    }
-
-    Q_INVOKABLE QVariantMap getselectedasset() {
-        QPointer <RoomObject> o = player_curroom->GetRoomObject(selected);        
-
-        if (o.isNull()) {
-            return QVariantMap();
-        }
-
-        if (o->GetAssetImage()) {
-            return o->GetAssetImage()->GetJSONCode();
-        }
-
-        if (o->GetAssetSound()) {
-            return o->GetAssetSound()->GetJSONCode();
-        }
-
-        if (o->GetAssetObject()) {
-            return o->GetAssetObject()->GetJSONCode();
-        }
-
-        return QVariantMap();
     }
 
     Q_INVOKABLE void saveworkspace(const QString workspace_dir) {

@@ -14,7 +14,9 @@
 #include "htmlpage.h"
 #include "domnode.h"
 #include "lightmanager.h"
+#ifndef __ANDROID__
 #include "filteredcubemapmanager.h"
+#endif
 #include "roomphysics.h"
 #include "performancelogger.h"
 #include "assetwebsurface.h"
@@ -48,33 +50,13 @@ public:
     void Clear();
 
     bool HasJSFunctionContains(const QString & s, const QString & code);    
-    void CallJSFunction(const QString & s, QPointer <Player> player, QList <QPointer <DOMNode> > nodes = QList <QPointer <DOMNode> >());
+    void CallJSFunction(const QString & s, QPointer <Player> player, MultiPlayerManager * multi_players, QList <QPointer <DOMNode> > nodes = QList <QPointer <DOMNode> >());
 
     void SetProperties(const QVariantMap & d);
     void SetProperties(QPointer <DOMNode> props);
-    QPointer <DOMNode> GetProperties();
+    QPointer <DOMNode> GetProperties();   
 
-    void SetV(const char * name, QVector3D v);
-    QVector3D GetV(const char * name) const;
-
-    void SetV4(const char * name, QVector4D v);
-    QVector4D GetV4(const char * name) const;
-
-    void SetF(const char * name, float v);
-    float GetF(const char * name) const;
-
-    void SetI(const char * name, int v);
-    int GetI(const char * name) const;
-
-    void SetB(const char * name, bool v);
-    bool GetB(const char * name) const;
-
-    void SetS(const char * name, QString v);
-    QString GetS(const char * name) const;
-
-    void SetC(const char * name, QColor v);
-    QColor GetC(const char * name) const;
-
+    void SetRoomTemplate(const QString & name);
     QPointer <RoomTemplate> GetRoomTemplate() const;
 
     QString GetSaveFilename() const;
@@ -133,7 +115,7 @@ public:
     void DoEdit(const QString & s);
     void DoDelete(const QString & s);
 
-    bool DeleteSelected(const QString & selected, const bool do_sync=true);
+    bool DeleteSelected(const QString & selected, const bool do_sync=true, const bool play_delete_sound=true);
     QString PasteSelected(const QString & selected, const QVector3D & p, const QVector3D & x, const QVector3D & y, const QVector3D & z, const QString & js_id);
     void EditText(const QString & selected, const QString & c, const bool backspace);   
 
@@ -148,7 +130,7 @@ public:
     void SetPlayerPosTrans(const QVector3D p);
     void SetUseClipPlane(const bool b, const QVector4D p = QVector4D(0,0,0,0));
 
-    void BindShader(QPointer <AssetShader> shader);
+    void BindShader(QPointer <AssetShader> shader, const bool disable_fog = false);
     void UnbindShader(QPointer <AssetShader> shader);
 
     void DrawCollisionModelGL(QPointer <AssetShader> shader);
@@ -165,9 +147,8 @@ public:
     QPointer <QScriptEngine> GetScriptEngine();
 
     void UpdateAssets();
-    void UpdateMedia(MultiPlayerManager *multi_players);
     void UpdateObjects(QPointer <Player> player, MultiPlayerManager*  multi_players, const bool player_in_room);
-    void UpdateJS(QPointer <Player> player);
+    void UpdateJS(QPointer <Player> player, MultiPlayerManager *multi_players);
     void UpdatePhysics(QPointer <Player> player);
     void UpdateAutoPlay();
 
@@ -184,18 +165,18 @@ public:
 
     bool SaveXML(const QString & filename);
     void SaveXML(QTextStream & ofs);
+
     bool SaveJSON(const QString & filename);
-    QVariantMap GetJSONCode(const bool show_defaults = true) const;  
 
     void OnCollisionEnter(QPointer <RoomObject> envobject, QPointer <RoomObject> other_envobject, QPointer <Player> player);
     void OnCollisionExit(QPointer <RoomObject> envobject, QPointer <RoomObject> other_envobject, QPointer <Player> player);
 
-    bool RunKeyPressEvent(QKeyEvent * e, QPointer <Player> player);
-    bool RunKeyReleaseEvent(QKeyEvent * e, QPointer <Player> player);
+    bool RunKeyPressEvent(QKeyEvent * e, QPointer <Player> player, MultiPlayerManager * multi_players);
+    bool RunKeyReleaseEvent(QKeyEvent * e, QPointer <Player> player, MultiPlayerManager * multi_players);
 
     unsigned int GetRoomNumTris() const;    
 
-    void SetPlayerLastTransform(const QMatrix4x4 & m); //remmebers player's last position here when going to/from pocketspace
+    void SetPlayerLastTransform(const QMatrix4x4 & m); //remmebers player's last position
     QMatrix4x4 GetPlayerLastTransform() const;   
 
     void StartURLRequest();    
@@ -221,6 +202,9 @@ public:
     bool GetProcessed() const;
 
     QPointer <HTMLPage> GetPage() const;   
+
+    bool GetTranslatorBusy() const;
+    void SetTranslatorBusy(bool value);
 
     void Create();
     void Create_Default_Workspace();
@@ -282,6 +266,8 @@ public slots:
 
 private:   
 
+    QVariantMap GetJSONCode(const bool show_defaults) const;
+
     void LinkToAssets(QPointer <RoomObject> o);    
 
     void Create_Error(const int code);
@@ -308,9 +294,9 @@ private:
 
     void AddPrimitiveAssetObjects();
 
-    void SetAllObjects(const char * name, const bool b);
+    void SetAllObjectsLocked(const bool b);
 
-    void LogErrorOnException();   
+    void LogErrorOnException(QPointer <AssetScript> script);
 
     //private room-specific properties
     QVector3D player_pos_trans;
@@ -357,6 +343,8 @@ private:
 
     QMatrix4x4 player_lastxform;
 
+    QString room_template;
+
     //Connections
     QPointer <RoomObject> entrance_object;
     QPointer <RoomObject> parent_object;
@@ -365,8 +353,8 @@ private:
     QList <QPointer <Room> > children; //my children nodes
     QPointer <Room> last_child; //last visited child node
 
-    bool scripts_ready;
-    bool custom_elements_processed;
+    bool scripts_ready;    
+    bool translator_busy;
 
     //statics    
     static QList <QPointer <AssetSkybox> > skyboxes;    

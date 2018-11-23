@@ -21,13 +21,15 @@
 
 #include "controllermanager.h"
 
+#include "socialwindow.h"
+#include "settingswindow.h"
+#ifndef __ANDROID__
 #include "hierarchywindow.h"
 #include "propertieswindow.h"
-#include "settingswindow.h"
 #include "assetwindow.h"
-#include "socialwindow.h"
 #include "codeeditorwindow.h"
 #include "navigationwindow.h"
+#endif
 #include "glwidget.h"
 
 #ifdef __ANDROID__
@@ -151,6 +153,7 @@ public slots:
 
     void ActionOpenWindow();
     void ActionToggleFullscreen();
+    void ActionVirtualMenu();
     void ActionSocial();
 #ifndef __ANDROID__
     void ActionCodeEditor();
@@ -190,8 +193,7 @@ private:
     QString GetNewWorkspaceDirectory();
 
     QTimer timer;
-    QTimer timer2;    
-    QMutex cef_mutex;
+//    QTimer timer2;
 
     QPointer <Game> game;
     QPointer <AbstractHMDManager> hmd_manager;
@@ -213,6 +215,7 @@ private:
     QMenu * ellipsisMenu;
     QPushButton * button_ellipsis;
 
+    QWidget * topbarwidget;
     QPushButton * button_back;    
     QPushButton * button_forward;
     QPushButton * button_reload;    
@@ -222,14 +225,12 @@ private:
     QPushButton * button_bookmark;
     int button_bookmark_state;
     QPointer <GLWidget> glwidget;
+    QMenu *fileMenu;
 #ifndef __ANDROID__
-    QMenu *webspaceMenu;
     QMenu *usersMenu;
-    QMenu *panelsMenu;
+    QMenu *windowMenu;
 #endif
-    QMenu *assetsMenu;
     QMenu *bookmarkMenu;
-    QMenu *viewMenu;
     QAction *newAct;
     QAction *openAct;
     QAction *saveAct;
@@ -246,6 +247,7 @@ private:
     QAction *stopRecordingAct;
     QAction *syncToAct;
     QAction *settingsAct;
+    QAction *virtualMenuAct;
 #ifndef __ANDROID__
     QAction *codeEditorAct;
     QAction *navigationAct;

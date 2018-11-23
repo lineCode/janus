@@ -190,13 +190,18 @@ void WebAsset::ClearData()
 }
 
 float WebAsset::GetProgress() const
-{
-    return progress;
+{    
+    return (GetError() || finished) ? 1.0f : progress;
 }
 
 bool WebAsset::GetError() const
 {
-    return (status_code >= 400);
+    return (status_code >= 400) || (status_code == -1);
+}
+
+void WebAsset::SetStatusCode(const int s)
+{
+    status_code = s;
 }
 
 int WebAsset::GetStatusCode() const
@@ -237,8 +242,9 @@ void WebAsset::ProcessThread()
             }
         }
         else {
-//            qDebug() << "WebAsset::ProcessThread() - REDIRECTION detected" << redirect_url << status_code;
             redirect_url.setFragment(url.fragment());
+            redirect_url = url.resolved(redirect_url);
+//            qDebug() << "WebAsset::ProcessThread() - REDIRECTION detected" << redirect_url << status_code << url.fragment();
             reply->close();
             Load(redirect_url);
             redirected = true;

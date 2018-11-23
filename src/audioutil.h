@@ -7,10 +7,6 @@ extern "C"{
     #include <opus.h>
 }
 
-/*#include <vorbis/codec.h>
-#include <vorbis/vorbisenc.h>
-#include <mpg123.h>*/
-
 #ifdef WIN64
 #include <AL/al.h>
 #include <AL/alc.h>
@@ -63,19 +59,13 @@ public:
     static QByteArray encode(QByteArray decoded); // Encode with Opus
     static QByteArray decode(QByteArray encoded); // Decode with Opus
 
-    /*static QByteArray decodeOGG(QByteArray encoded); // Decode OGG to WAV
-    static QByteArray decodeMP3(QByteArray encoded); // Decode MP3 to WAV*/
-
     static bool isWav(QByteArray ba); // Check if wav
     static QByteArray stereoToMono(QByteArray mono); // Convert a stereo WAV byte array to a mono one
 
     static const int _FRAME_SIZE;
-    static const int _MAX_FRAME_SIZE;
     static const int _SAMPLE_RATE;
     static const int _CHANNELS;
     static const int _APPLICATION;
-
-    static const int _MAX_PACKET_SIZE;
 
     static OpusEncoder * encoder;
     static OpusDecoder * decoder;

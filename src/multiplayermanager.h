@@ -10,7 +10,6 @@
 #include "assetghost.h"
 #include "assetrecording.h"
 #include "soundmanager.h"
-#include "audioutil.h"
 #include "settingsmanager.h"
 
 class RoomObject;
@@ -103,11 +102,13 @@ public:
     void SetEnabled(const bool b);
     bool GetEnabled();
 
+    QString GetCurURL() const;
+
     QList <ServerConnection> & GetConnectionList();
     void SetConnections(QHash <QString, QHash <int, QSet <QString> > > cs);
     QHash <QString, QHash <int, QSet <QString> > > GetConnections() const;
 
-    void Update(QPointer <Player> player, const QString & url, const QList <QString> adjacent_urls, const QString & name, const bool room_allows_party_mode);
+    void Update(QPointer <Player> player, const QString & url, const QList <QString> adjacent_urls, const QString & name, const bool room_allows_party_mode, const float delta_time);
 
     void SetURLToDraw(const QString & s);
     void DrawGL(QPointer <AssetShader> shader, const QVector3D & player_pos, const bool render_left_eye);
@@ -125,13 +126,14 @@ public:
     bool SetChatMessage(QPointer <Player> player, const QString & s);
     void SetSendPortal(const QString & s, const QString & js_id);    
     void SetCursorPosition(const QVector3D & cpos, const QVector3D & cxdir, const QVector3D & cydir, const QVector3D & czdir, const float cscale);    
-    void AddMicBuffers(const QList <QByteArray> & buffers);
+    void AddMicBuffers(const QList <QByteArray> buffers);
 
     void SetHMD(const QString & s);
 
     QString GetUserID() const;    
     QPointer <RoomObject> GetPlayer();
     QList <QPointer <RoomObject> > GetPlayersInRoom(const QString & url);
+    QMap <QString, DOMNode *> GetPlayersInRoomDOMNodeMap(const QString & url);
 
     QList <QPair <QString, QColor> > GetNewChatMessages();
 
@@ -169,6 +171,9 @@ public:
 
     void SetCustomPortalShader(const QString shader_src);
     QString GetCustomPortalShader() const;
+
+    QList <QPointer <RoomObject> > & GetOnPlayerEnterEvents();
+    QList <QPointer <RoomObject> > & GetOnPlayerExitEvents();
 
 public slots:
 
@@ -277,6 +282,9 @@ private:
 
     //assetrecordings (emulate server activity)
     QList <QPointer <AssetRecording> > assetrecording_list;
+
+    QList <QPointer <RoomObject> > on_player_enter_events; //for room.onPlayerEnter room.onPlayerExit events
+    QList <QPointer <RoomObject> > on_player_exit_events; //for room.onPlayerEnter room.onPlayerExit events
 
     static unsigned int max_connect_retries;
 };

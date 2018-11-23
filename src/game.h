@@ -37,10 +37,12 @@
 #include "multiplayermanager.h"
 #include "menu.h"
 #include "rendererinterface.h"
-#include "virtualkeyboard.h"
+#include "virtualmenu.h"
 #include "bookmarkmanager.h"
 #include "controllermanager.h"
+#ifndef __ANDROID__
 #include "filteredcubemapmanager.h"
+#endif
 #include "soundmanager.h"
 
 #ifdef __ANDROID__
@@ -110,6 +112,7 @@ public:
     void keyReleaseEvent(QKeyEvent * e);
 
     QPointer <Environment> GetEnvironment();
+    QPointer <VirtualMenu> GetVirtualMenu();
     QPointer <Player> GetPlayer();
     QPointer <MultiPlayerManager> GetMultiPlayerManager();
     QPointer <ControllerManager> GetControllerManager();
@@ -180,8 +183,8 @@ public:
 
     void SetGamepadButtonPress(const bool b);
 
-    void StartEscapeToPocketspace();
-    void EscapeToPocketspace();
+    void StartEscapeToHome();
+    void EscapeToHome();
 
     void SaveScreenThumb(const QString out_filename);
 
@@ -192,7 +195,7 @@ public:
 
     //used for MainWindow UI interop
     void CreateNewWorkspace(const QString name);
-    QPointer <RoomObject> CreatePortal(const QString url, const bool send_multi);
+    QPointer <RoomObject> CreatePortal(const QUrl url, const bool send_multi);
     void SaveRoom(const QString out_filename);
 
     void SendChatMessage(const QString s);    
@@ -213,8 +216,6 @@ public:
 
     void DoImport(const QString url);
 
-    void UpdateMedia();
-
 #ifdef __ANDROID__
     bool GetPinching();
     void SetPinching(const bool b);
@@ -234,8 +235,7 @@ private:
     void UpdateCursorAndTeleportTransforms();
     void UpdateFollowMode();
     void UpdateImportList();
-    void UpdateControllers();
-    void UpdateMenuObject();
+    void UpdateControllers();    
     void UpdateAssetRecordings();
     void UpdateAudio();
     void UpdateAssets();    
@@ -253,8 +253,8 @@ private:
 
     void ClearSelection(const int cursor_index);   
 
-    void UpdateVirtualKeyboard();
-    void DrawVirtualKeyboard();
+    void UpdateVirtualMenu();
+    void DrawVirtualMenu();   
 
     //interact ops   
     void StartOpInteractionDefault(const int i);
@@ -300,7 +300,7 @@ private:
     QPointer <Player> player;
     QPointer <Environment> env;
     QPointer <MultiPlayerManager> multi_players;
-    QPointer <VirtualKeyboard> virtualkeyboard;
+    QPointer <VirtualMenu> virtualmenu;    
     QPointer <BookmarkManager> bookmarks;
     QPointer <ControllerManager> controller_manager;
 
@@ -318,8 +318,6 @@ private:
 
     TextGeom info_text_geom;
     TextGeom info2_text_geom;
-    TextGeom speaking_text_geom;
-	TextGeom recording_text_geom;    
 
     unsigned int global_uuid;
 
@@ -347,6 +345,9 @@ private:
     QTime rmb_held_time;
 
     static QEvent::Type keypress;
+
+    QTime deltat_time;
+    float delta_time;
 
 #ifdef __ANDROID__
     QGyroscope * gyroscope;

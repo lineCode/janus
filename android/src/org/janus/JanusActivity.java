@@ -18,6 +18,8 @@ import android.os.Message;
 import android.os.Vibrator;
 import android.util.DisplayMetrics;
 import android.util.Log;
+import android.view.ActionMode;
+import android.view.inputmethod.InputMethodManager;
 import android.view.Gravity;
 import android.view.Surface;
 import android.view.View;
@@ -26,6 +28,7 @@ import android.view.Window;
 import android.view.InputDevice;
 import android.view.KeyEvent;
 import android.view.MotionEvent;
+import android.view.WindowManager;
 import android.view.WindowManager.LayoutParams;
 import android.widget.FrameLayout;
 
@@ -107,6 +110,8 @@ public class JanusActivity extends org.qtproject.qt5.android.bindings.QtActivity
             }
 
             webViewManager = new WebViewManager(JanusActivity.this);
+
+            getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
 
             View decorView = getWindow().getDecorView();
             //int uiOptions = View.SYSTEM_UI_FLAG_LAYOUT_STABLE | View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY| View.SYSTEM_UI_FLAG_FULLSCREEN | View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN | View.SYSTEM_UI_FLAG_HIDE_NAVIGATION;
@@ -249,6 +254,16 @@ public class JanusActivity extends org.qtproject.qt5.android.bindings.QtActivity
             return gearManager.getShowingVR() || gvrManager.getShowingVR();
         }
 
+        @Override
+        public void onActionModeStarted(ActionMode mode) {
+            super.onActionModeStarted(mode);
+
+            if (!getShowingVR()){
+                mode.getMenu().clear();
+                mode.getMenu().close();
+            }
+        }
+
         //============================================================================================================
         //Splash
         //============================================================================================================
@@ -346,16 +361,12 @@ public class JanusActivity extends org.qtproject.qt5.android.bindings.QtActivity
         //WebView
         //============================================================================================================
 
-        public void setUseGeckoWebView(boolean b) {
-            webViewManager.setUseGeckoWebView(b);
+        public String getCookie() {
+            return webViewManager.getCookie();
         }
 
         public void createNewWebView(int tag) {
             webViewManager.createNewWebView(tag);
-        }
-
-        public void updateWebView(int tag) {
-            webViewManager.updateWebView(tag);
         }
 
         public void removeWebView(int tag) {
@@ -460,6 +471,14 @@ public class JanusActivity extends org.qtproject.qt5.android.bindings.QtActivity
 
         public void mouseReleaseWebView(int tag, int x, int y) {
             webViewManager.mouseReleaseWebView(tag,x,y);
+        }
+
+        public void keyPressWebView(int tag, int code, int state) {
+            webViewManager.keyPressWebView(tag,code,state);
+        }
+
+        public void keyReleaseWebView(int tag, int code, int state) {
+            webViewManager.keyReleaseWebView(tag,code,state);
         }
 
         public boolean getRepaintRequestedAtWebView(int tag) {
@@ -667,6 +686,33 @@ public class JanusActivity extends org.qtproject.qt5.android.bindings.QtActivity
                         talk_button.setVisibility(View.VISIBLE);
                         jump_button.setVisibility(View.VISIBLE);
                     }
+
+                    if (getShowingVR() || getGamepadConnected())
+                    {
+                        InputMethodManager imm = (InputMethodManager) getSystemService(Activity.INPUT_METHOD_SERVICE);
+                        View view = getCurrentFocus();
+                        if (view == null) {
+                            return;
+                        }
+                        imm.hideSoftInputFromWindow(view.getWindowToken(), 0);
+                    }
+                }
+        };
+
+        public void hideKeyboard(){
+            Message msg = new Message();
+
+            hideKeyboardHandler.sendMessage(msg);
+        }
+
+        protected Handler hideKeyboardHandler = new Handler() {
+                public void handleMessage(Message msg) {
+                    InputMethodManager imm = (InputMethodManager) getSystemService(Activity.INPUT_METHOD_SERVICE);
+                    View view = getCurrentFocus();
+                    if (view == null) {
+                        return;
+                    }
+                    imm.hideSoftInputFromWindow(view.getWindowToken(), 0);
                 }
         };
 
@@ -886,6 +932,10 @@ public class JanusActivity extends org.qtproject.qt5.android.bindings.QtActivity
                         button_start = true;
                         handled = true;
                         break;
+                    case KeyEvent.KEYCODE_BUTTON_SELECT:
+                        button_back = true;
+                        handled = true;
+                        break;
                     case KeyEvent.KEYCODE_BACK:
                         button_back = true;
                         handled = true;
@@ -971,6 +1021,10 @@ public class JanusActivity extends org.qtproject.qt5.android.bindings.QtActivity
                         break;
                     case KeyEvent.KEYCODE_BUTTON_START:
                         button_start = false;
+                        handled = true;
+                        break;
+                    case KeyEvent.KEYCODE_BUTTON_SELECT:
+                        button_back = false;
                         handled = true;
                         break;
                     case KeyEvent.KEYCODE_BACK:
@@ -1087,17 +1141,6 @@ public class JanusActivity extends org.qtproject.qt5.android.bindings.QtActivity
 
         @Override
         public void onInputDeviceRemoved(int deviceId) {
-            //Check if connected devices still contains a gamepad
-            boolean connected = false;
-            int[] devices = mInputManager.getInputDeviceIds();
-            for (int i = 0; i < devices.length; i++) {
-                if ((mInputManager.getInputDevice(devices[i]).getSources() & InputDevice.SOURCE_GAMEPAD) == InputDevice.SOURCE_GAMEPAD
-                || (mInputManager.getInputDevice(devices[i]).getSources() & InputDevice.SOURCE_JOYSTICK) == InputDevice.SOURCE_JOYSTICK) {
-                    connected = true;
-                    break;
-                }
-            }
-            gamepad_connected = connected;
         }
 
         //============================================================================================================

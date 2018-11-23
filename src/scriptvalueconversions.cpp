@@ -87,37 +87,11 @@ QScriptValue DOMNodeToScriptValue(QScriptEngine *engine, const QPointer <DOMNode
 
 void DOMNodeFromScriptValue(const QScriptValue &obj, QPointer <DOMNode> &node)
 {
-    QString js_id;
-    if (obj.property("js_id").isValid()) {
-        js_id = obj.property("js_id").toString();
+//    qDebug() << "DOMNodeFromScriptValue" << (qvariant_cast<ScriptableVector *>(obj.toVariant().toMap()["pos"]))->toQVector3D();    
+    //special condition
+    if (obj.property("js_id").isValid() && obj.property("js_id").toString()==QString("__room")) {
+        node->SetType(TYPE_ROOM);
     }
-//    else {
-//        qDebug() << "DOMNodeFromScriptValue warning!";
-//        node->setProperty("_type", "error");
-//        return;
-//    }
-
-    if (js_id==QString("__room")) {
-        node->setProperty("_type", "room");
-        QScriptValueIterator itr(obj);
-        while (itr.hasNext()) {
-            itr.next();
-
-            const QVariant value = itr.value().toVariant();
-            node->setProperty(itr.name().toStdString().c_str(), value);
-        }
-    }
-    else {
-        QString objTypeString = obj.property("_type").toString();
-        node->setProperty("_type", objTypeString);
-        QScriptValueIterator itr(obj);
-        while (itr.hasNext()) {
-            itr.next();
-
-            const QVariant value = itr.value().toVariant();
-            node->setProperty(itr.name().toStdString().c_str(), value);
-        }
-    }
-
+    node->SetProperties(obj.toVariant().toMap());
 //    qDebug() << "DOMNodeFromScriptValue" << node->GetS("js_id");
 }

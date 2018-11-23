@@ -42,7 +42,7 @@ TextureHandle* AssetSkybox::GetTextureHandle()
     bool imagesReady = true;
 
 	if (m_has_generated_texture == false)
-	{
+    {
 		for (int imageIndex = 0; imageIndex < imageCount; ++imageIndex)
 		{
             if (m_asset_images[imageIndex] == 0)
@@ -51,9 +51,9 @@ TextureHandle* AssetSkybox::GetTextureHandle()
             }
             QPointer <AssetImage> a =  m_asset_images[imageIndex];
             if ((!a || !a->GetFinished()))
-			{
-				imagesReady = false;
-			}
+            {
+                imagesReady = false;
+            }
 		}
 
         if (imageCount == 1 && imagesReady && !m_has_generated_texture && m_asset_images[0])
@@ -63,10 +63,10 @@ TextureHandle* AssetSkybox::GetTextureHandle()
 		}
 
 		if (imageCount > 1 && imagesReady && !m_has_generated_texture)
-		{
+        {
 			QVector <QPointer<AssetImageData>> asset_image_datas;
 			asset_image_datas.resize(6);
-            std::vector<TextureHandle*> asset_image_handles;
+            QVector<TextureHandle*> asset_image_handles;
             asset_image_handles.resize(6);
 
 			bool tex_linear = false;
@@ -85,10 +85,10 @@ TextureHandle* AssetSkybox::GetTextureHandle()
                     asset_image_datas[i] = asset_image->GetTextureData();
                     if (i == 0)
                     {
-                        tex_linear = asset_image->GetB("tex_linear");
-                        tex_mipmap = asset_image->GetB("tex_mipmap");
-                        tex_clamp = asset_image->GetB("tex_clamp");
-                        QString const tex_alpha_string = asset_image->GetS("tex_alpha");
+                        tex_linear = asset_image->GetProperties()->GetTexLinear();
+                        tex_mipmap = asset_image->GetProperties()->GetTexMipmap();
+                        tex_clamp = asset_image->GetProperties()->GetTexClamp();
+                        QString const tex_alpha_string = asset_image->GetProperties()->GetTexAlpha();
 
                         if (tex_alpha_string.contains("none")) {
                             tex_alpha = TextureHandle::ALPHA_TYPE::NONE;
@@ -103,7 +103,7 @@ TextureHandle* AssetSkybox::GetTextureHandle()
                             tex_alpha = TextureHandle::ALPHA_TYPE::UNDEFINED;
                         }
 
-                        QString const tex_colorspace_string = asset_image->GetS("tex_colorspace");
+                        QString const tex_colorspace_string = asset_image->GetProperties()->GetTexColorspace();
 
                         if (tex_colorspace_string.contains("sRGB")) {
                             tex_colorspace = TextureHandle::COLOR_SPACE::SRGB;

@@ -5,10 +5,10 @@
 #-------------------------------------------------
 
 # Define version
-__VERSION=60.0
+__VERSION=62.0
 
 #JamesMcCrae: define this when doing Oculus-submitted builds (either for Rift of GearVR app categories)
-DEFINES += OCULUS_SUBMISSION_BUILD
+#DEFINES += OCULUS_SUBMISSION_BUILD
 #Daydream store build
 #DEFINES += DAYDREAM_SUBMISSION_BUILD
 
@@ -22,7 +22,6 @@ DEFINES += GEAR_ID=\\\"$$system(type gearid.txt)\\\"
 DEFINES += RIFT_ID=\\\"$$system(cat riftid.txt)\\\"
 DEFINES += GEAR_ID=\\\"$$system(cat gearid.txt)\\\"
 }
-
 
 # Default rules for deployment.
 android:include(deployment.pri)
@@ -46,9 +45,6 @@ CONFIG(release, debug|release) {
 
 QT       += core opengl gui network xml script scripttools websockets
 
-#!android {
-#    QT += webengine webenginewidgets
-#}
 android{
     QT += androidextras sensors
 }
@@ -109,6 +105,7 @@ SOURCES += \
     src/environment.cpp \
     src/filteredcubemapmanager.cpp \        
     src/game.cpp \
+    src/gamepad.c \
     src/geom.cpp \
     src/glwidget.cpp \
     src/hierarchywindow.cpp \
@@ -127,10 +124,7 @@ SOURCES += \
     src/player.cpp \
     src/propertieswindow.cpp \
     src/renderer.cpp \
-    src/renderergl33_loadingthread.cpp \
-    src/renderergl33_renderthread.cpp \    
-    src/renderergl44_loadingthread.cpp \
-    src/renderergl44_renderthread.cpp \    
+    src/renderergl33.cpp \
     src/rendererinterface.cpp \    
     src/room.cpp \
     src/roomobject.cpp \
@@ -150,11 +144,11 @@ SOURCES += \
     src/textureimportergli.cpp \
     src/textureimporterqimage.cpp \
     src/texturemanager.cpp \    
-    src/virtualkeyboard.cpp \
     src/webasset.cpp \
-    src/gamepad.c
+    src/virtualmenu.cpp
 
-unix:!android:SOURCES += ./resources/cef/linux/libcef_dll/base/cef_atomicops_x86_gcc.cc
+unix:!android:!macx:SOURCES += ./resources/cef/linux/libcef_dll/base/cef_atomicops_x86_gcc.cc
+unix:!android:macx:SOURCES += ./resources/cef/mac/libcef_dll/base/cef_atomicops_x86_gcc.cc
 
 HEADERS += \
     src/abstracthmdmanager.h \
@@ -205,10 +199,7 @@ HEADERS += \
     src/player.h \
     src/propertieswindow.h \
     src/renderer.h \
-    src/renderergl33_loadingthread.h \
-    src/renderergl33_renderthread.h \    
-    src/renderergl44_loadingthread.h \
-    src/renderergl44_renderthread.h \    
+    src/renderergl33.h \
     src/rendererinterface.h \    
     src/room.h \
     src/roomobject.h \
@@ -227,9 +218,9 @@ HEADERS += \
     src/textureimportercmft.h \    
     src/textureimportergli.h \
     src/textureimporterqimage.h \
-    src/texturemanager.h \    
-    src/virtualkeyboard.h \
-    src/webasset.h
+    src/texturemanager.h \        
+    src/webasset.h \
+    src/virtualmenu.h
 
 # NVIDIA HBAO
 #win32:INCLUDEPATH += "./resources/HBAOPlus/include"
@@ -252,10 +243,26 @@ unix:macx:HEADERS -= "src/gamepad.h"
 #Remove dependencies unused by Android
 android:SOURCES -= "src/gamepad.c" \
     "src/vivemanager.cpp" \    
-    "src/cefwebview.cpp"
+    "src/cefwebview.cpp" \
+    "src/filteredcubemapmanager.cpp" \
+    "src/hierarchywindow.cpp" \
+    "src/propertieswindow.cpp" \
+    "src/assetwindow.cpp" \
+    "src/codeeditorwindow.cpp" \
+    "src/navigationwindow.cpp" \
+    "src/renderergl44_loadingthread.cpp" \
+    "src/renderergl44_renderthread.cpp"
 android:HEADERS -= "src/gamepad.h" \
     "src/vivemanager.h" \    
-    "src/cefwebview.h"
+    "src/cefwebview.h" \
+    "src/filteredcubemapmanager.h" \
+    "src/hierarchywindow.h" \
+    "src/propertieswindow.h" \
+    "src/assetwindow.h" \
+    "src/codeeditorwindow.h" \
+    "src/navigationwindow.h" \
+    "src/renderergl44_loadingthread.h" \
+    "src/renderergl44_renderthread.h"
 android:SOURCES += "src/androidwebview.cpp" \
     "src/slidingtabwidget.cpp" \
     "src/jniutil.cpp" \
@@ -508,12 +515,12 @@ contains(ANDROID_TARGET_ARCH,x86) {
 }
 
 # Opus
-INCLUDEPATH +="./resources/opus-1.1.2/include"
+INCLUDEPATH +="./resources/opus-1.2.1/include"
 CONFIG(debug) {
-    win32:LIBS += -L"$$PWD/resources/opus-1.1.2/lib/x64/debug"
+    win32:LIBS += -L"$$PWD/resources/opus-1.2.1/win32/VS2015/x64/debug"
 }
 CONFIG(release) {
-    win32:LIBS += -L"$$PWD/resources/opus-1.1.2/lib/x64/release"
+    win32:LIBS += -L"$$PWD/resources/opus-1.2.1/win32/VS2015/x64/release"
 }
 unix:macx:LIBS += -L"/usr/local/lib" #used for Opus - OSX
 !android:LIBS += -lopus

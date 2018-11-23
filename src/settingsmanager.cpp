@@ -17,8 +17,13 @@ void SettingsManager::LoadSettings()
     settings["comfortmode"] = true;
     settings["downloadcache"] = true;
     settings["antialiasing"] = true;
+#ifndef __ANDROID__
     settings["enhanceddepthprecision"] = true;
+#else
+    settings["enhanceddepthprecision"] = false;
+#endif
     settings["assetshaders"] = true;
+    settings["assetimages"] = true;
     settings["sounds"] = true;
 #ifndef __ANDROID__
     settings["volumevoip"] = 50.0f;
@@ -79,7 +84,7 @@ void SettingsManager::LoadSettings()
     settings["FPSLimitRender"] = 0;
     settings["FPSLimitUpdate"] = 0;
     settings["vivetrackpadmovement"] = false;
-    settings["homeurl"] = QString("https://vesta.janusvr.com");
+    settings["homeurl"] = QString("https://vesta.janusvr.com/");
     settings["websurfaceurl"] = QString("https://google.com");
 #ifdef __ANDROID__
     settings["renderportalrooms"] = false;
@@ -88,6 +93,7 @@ void SettingsManager::LoadSettings()
 #endif
 
     QVector <QString> filename(2);
+
     filename[0] = MathUtil::GetAppDataPath() + "settings.json";
     filename[1] = MathUtil::GetApplicationPath() + "demo.json"; //packaged demo.json settings override
 
@@ -124,6 +130,7 @@ void SettingsManager::SaveSettings() {
     const QString filename = MathUtil::GetAppDataPath() + "settings.json";
     QFile file(filename);
     if (!file.open(QIODevice::WriteOnly | QIODevice::Text)) {
+	qDebug() << "SettingsManager::SaveSettings() - unable to save " << filename;
         return;
     }
 
@@ -249,6 +256,11 @@ bool SettingsManager::GetMicAlwaysOn()
 bool SettingsManager::GetShadersEnabled()
 {
     return settings["assetshaders"].toString().toLower() == "true";
+}
+
+bool SettingsManager::GetAssetImagesEnabled()
+{
+    return settings["assetimages"].toString().toLower() == "true";
 }
 
 void SettingsManager::SetMousePitchEnabled(const bool b)

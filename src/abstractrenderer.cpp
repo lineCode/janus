@@ -3,7 +3,7 @@
 char const * AbstractRenderer::g_gamma_correction_GLSL = "out_color = pow(out_color, vec4(0.45454545454, 0.45454545454, 0.45454545454, 1.0));";
 //char const * AbstractRenderer::g_gamma_correction_GLSL = "bvec4 cutoff = lessThan(out_color, vec4(0.0031308)); vec4 higher = vec4(1.055) * pow(out_color, vec4(1.0 / 2.4)) - vec4(0.055); vec4 lower = out_color * vec4(12.92); out_color = mix(higher, lower, cutoff);";
 
-AbstractRenderer::AbstractRenderer(AbstractRenderer * p_main_thread_renderer /* = nullptr */)
+AbstractRenderer::AbstractRenderer()
     : m_update_GPU_state(false),
       m_allow_color_mask(true),
       m_active_texture_slot(0),
@@ -15,8 +15,7 @@ AbstractRenderer::AbstractRenderer(AbstractRenderer * p_main_thread_renderer /* 
       m_msaa_count(4),
       m_framebuffer_requires_initialization(true),
       m_framebuffer_initialized(false),
-      m_frame_rate_limiter(1),
-      m_reallocation_guard(QMutex::Recursive),
+      m_frame_rate_limiter(1),      
       m_current_submission_index(0),
       m_completed_submission_index(1),  // This always starts 1 ahead of m_rendering_index, so we don't try to push into the initial m_rendering_index value
       m_rendering_index(2),
@@ -30,8 +29,7 @@ AbstractRenderer::AbstractRenderer(AbstractRenderer * p_main_thread_renderer /* 
       m_screenshot_is_equi(false),
       m_screenshot_frame_index(0),
       m_enhanced_depth_precision_used(false),
-      m_enhanced_depth_precision_supported(false),
-      m_main_thread_renderer(p_main_thread_renderer),
+      m_enhanced_depth_precision_supported(false),      
       m_glClipControl(nullptr),
       m_GPUTimeMin(UINT64_MAX),
       m_GPUTimeMax(0),
@@ -1003,11 +1001,6 @@ void AbstractRenderer::InitializeGLObjects()
     //InitScreenAlignedQuad();
 }
 
-void AbstractRenderer::InitializeGLObjects2()
-{
-    AbstractRenderer::InitializeGLObjects();
-}
-
 void AbstractRenderer::InitializeState()
 {
 //    qDebug() << "AbstractRenderer::InitializeState()";
@@ -1049,9 +1042,9 @@ void AbstractRenderer::InitializeState()
 #endif
 
     // Optional Depth Precision improvements
+#ifndef __ANDROID__
     if (QOpenGLContext::currentContext()->hasExtension(QByteArrayLiteral("GL_ARB_clip_control")))
     {
-#ifndef __ANDROID__
         m_glClipControl = (PFNGLCLIPCONTROLPROC)QOpenGLContext::currentContext()->getProcAddress(QByteArrayLiteral("glClipControl"));
 
         if (m_glClipControl != nullptr)
@@ -1060,12 +1053,14 @@ void AbstractRenderer::InitializeState()
             m_enhanced_depth_precision_supported = true;
         }
         else
-#endif
         {
             qDebug () << "glClipControl NOT SUPPORTED!";
             m_enhanced_depth_precision_supported = false;
         }
     }
+#else
+    m_enhanced_depth_precision_supported = false;
+#endif
 
     // Color and Raster state
     MathUtil::glFuncs->glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
@@ -1408,7 +1403,7 @@ ColorMask AbstractRenderer::GetColorMask() const
     return m_color_mask;
 }
 
-void AbstractRenderer::GetViewportsAndCameraCount(std::vector<float> & viewports, RENDERER::RENDER_SCOPE const p_scope, uint32_t & camera_count)
+void AbstractRenderer::GetViewportsAndCameraCount(QVector<float> & viewports, RENDERER::RENDER_SCOPE const p_scope, uint32_t & camera_count)
 {
     QVector4D viewport;
     camera_count = m_scoped_cameras_cache[m_rendering_index][static_cast<size_t>(p_scope)].size();
@@ -1457,7 +1452,7 @@ void AbstractRenderer::GenerateEnvMapsFromCubemapTextureHandle(Cubemaps& p_cubem
 
     // Allocate memory for holding raw face data
     size_t const pixel_data_size = (gl_tex_red_size / 8 * ((gl_tex_red_size == 8) ? 3 : 4));
-    std::vector<uint8_t> pixel_data(pixel_data_size * gl_tex_width * gl_tex_width, 0);
+    QVector<uint8_t> pixel_data(pixel_data_size * gl_tex_width * gl_tex_width, 0);
     // For each face
     gli::format format = (gl_tex_red_size == 8) ? gli::FORMAT_BGR8_UNORM_PACK8 : gli::FORMAT_RGBA16_SFLOAT_PACK16;
     gli::extent2d extent = { gl_tex_width, gl_tex_width };
@@ -1498,21 +1493,20 @@ void AbstractRenderer::GenerateEnvMapsFromCubemapTextureHandle(Cubemaps& p_cubem
 
 }
 
-void AbstractRenderer::RenderObjectsStereoViewportInstanced(AbstractRenderer * p_main_thread_renderer,
-                                                            const RENDERER::RENDER_SCOPE p_scope,
-                                                            const std::vector<AbstractRenderCommand> &p_object_render_commands,
-                                                            const std::unordered_map<StencilReferenceValue, LightContainer> &p_scoped_light_containers)
+void AbstractRenderer::RenderObjectsStereoViewportInstanced(const RENDERER::RENDER_SCOPE p_scope,
+                                                            const QVector<AbstractRenderCommand> &p_object_render_commands,
+                                                            const QHash<StencilReferenceValue, LightContainer> &p_scoped_light_containers)
 {
 #ifndef __ANDROID__
     const size_t camera_count_this_scope = m_per_frame_scoped_cameras_view_matrix[static_cast<size_t>(p_scope)].size();
 
-    std::vector<float> viewports;
+    QVector<float> viewports;
     viewports.reserve(camera_count_this_scope * 4);
 
     QVector4D viewport;
     for (size_t camera_index = 0; camera_index < camera_count_this_scope; camera_index++)
     {
-        VirtualCamera& camera = p_main_thread_renderer->m_scoped_cameras_cache[p_main_thread_renderer->m_rendering_index][static_cast<size_t>(p_scope)][camera_index];
+        VirtualCamera& camera = m_scoped_cameras_cache[m_rendering_index][static_cast<size_t>(p_scope)][camera_index];
         viewport = camera.GetViewport();
         viewports.push_back(viewport.x());
         viewports.push_back(viewport.y());
@@ -1538,7 +1532,7 @@ void AbstractRenderer::RenderObjectsStereoViewportInstanced(AbstractRenderer * p
     {
         if (camera_count_this_scope == 0)
         {
-            MathUtil::glFuncs->glViewport(0, 0, p_main_thread_renderer->m_window_width, p_main_thread_renderer->m_window_height);
+            MathUtil::glFuncs->glViewport(0, 0, m_window_width, m_window_height);
         }
         else
         {
@@ -1562,13 +1556,13 @@ void AbstractRenderer::RenderObjectsStereoViewportInstanced(AbstractRenderer * p
     GLuint current_programID = 0;
     ProgramHandle* current_program_handle = nullptr;
 
-    std::vector<GLfloat> default_color;
+    QVector<GLfloat> default_color;
     default_color.resize(4);
     default_color[0] = 1.0f;
     default_color[1] = 1.0f;
     default_color[2] = 1.0f;
     default_color[3] = 1.0f;
-    std::vector<GLfloat> default_normal;
+    QVector<GLfloat> default_normal;
     default_normal.resize(4);
     default_normal[0] = 0.0f;
     default_normal[1] = 0.0f;
@@ -1636,7 +1630,7 @@ void AbstractRenderer::RenderObjectsStereoViewportInstanced(AbstractRenderer * p
             {
                 if (current_program_handle == nullptr || program_handle != current_program_handle)
                 {
-                    GLuint programID = p_main_thread_renderer->GetProgramHandleID(program_handle);
+                    GLuint programID = GetProgramHandleID(program_handle);
                     MathUtil::glFuncs->glUseProgram(programID);
                     current_programID = programID;
                     current_program_handle = program_handle;
@@ -1658,7 +1652,7 @@ void AbstractRenderer::RenderObjectsStereoViewportInstanced(AbstractRenderer * p
 					)
                 {
                     ((AssetShader_Frame *)frame_uniforms)->iViewportCount = QVector4D(viewport_count_float, base_viewport, 0.0f, 0.0f);
-                    p_main_thread_renderer->UpdateFrameUniforms(current_programID, frame_uniforms);
+                    UpdateFrameUniforms(current_programID, frame_uniforms);
                     current_frame_uniforms = frame_uniforms;
                     current_base_viewport = base_viewport;
                 }
@@ -1667,7 +1661,7 @@ void AbstractRenderer::RenderObjectsStereoViewportInstanced(AbstractRenderer * p
                 AssetShader_Room const * room_uniforms = current_render_command.GetRoomUniformsPointer();
                 if(current_room_uniforms == nullptr || *room_uniforms != *current_room_uniforms || shader_changed == true)
                 {
-                    p_main_thread_renderer->UpdateRoomUniforms(current_programID, room_uniforms);
+                    UpdateRoomUniforms(current_programID, room_uniforms);
                     current_room_uniforms = room_uniforms;
                 }
 
@@ -1675,14 +1669,15 @@ void AbstractRenderer::RenderObjectsStereoViewportInstanced(AbstractRenderer * p
                 if (current_stencil_ref != stencil_ref)
                 {
                     current_stencil_ref = stencil_ref;
-                    auto itr = p_scoped_light_containers.find(current_stencil_ref);
+                    QHash<StencilReferenceValue, LightContainer>::const_iterator itr = p_scoped_light_containers.find(current_stencil_ref);
                     if (itr != p_scoped_light_containers.end())
                     {
-                        p_main_thread_renderer->PushNewLightData(&(itr->second));
+                        //p_main_thread_renderer->PushNewLightData(&(itr->second));
+                        PushNewLightData(&(itr.value()));
                     }
                     else
                     {
-                        p_main_thread_renderer->PushNewLightData(&m_empty_light_container);
+                        PushNewLightData(&m_empty_light_container);
                     }
                 }
 
@@ -1690,7 +1685,7 @@ void AbstractRenderer::RenderObjectsStereoViewportInstanced(AbstractRenderer * p
                 AssetShader_Object const * object_uniforms = current_render_command.GetObjectUniformsPointer();
                 if (current_object_uniforms == nullptr || *object_uniforms != *current_object_uniforms || shader_changed == true)
                 {
-                    p_main_thread_renderer->UpdateObjectUniforms(current_programID, object_uniforms);
+                    UpdateObjectUniforms(current_programID, object_uniforms);
                     current_object_uniforms = object_uniforms;
                 }
 
@@ -1698,7 +1693,7 @@ void AbstractRenderer::RenderObjectsStereoViewportInstanced(AbstractRenderer * p
                 AssetShader_Material const * material_uniforms = current_render_command.GetMaterialUniformsPointer();
                 if (current_material_uniforms == nullptr || *material_uniforms != *current_material_uniforms || shader_changed == true)
                 {
-                    p_main_thread_renderer->UpdateMaterialUniforms(current_programID, material_uniforms);
+                    UpdateMaterialUniforms(current_programID, material_uniforms);
                     current_material_uniforms = material_uniforms;
                 }
 
@@ -1711,7 +1706,7 @@ void AbstractRenderer::RenderObjectsStereoViewportInstanced(AbstractRenderer * p
                         continue;
                     }
 
-                    BindTextureHandleRef(&(p_main_thread_renderer->m_texture_handle_to_GL_ID), texture_slot, texture_handle_ref);
+                    BindTextureHandleRef(&(m_texture_handle_to_GL_ID), texture_slot, texture_handle_ref);
                 }
 
                 // Render object
@@ -1725,7 +1720,7 @@ void AbstractRenderer::RenderObjectsStereoViewportInstanced(AbstractRenderer * p
                     auto current_mesh_handle = current_render_command.m_mesh_handle;
                     if (current_mesh_handle != nullptr)
                     {
-                        p_main_thread_renderer->BindMeshHandle(current_mesh_handle);
+                        BindMeshHandle(current_mesh_handle);
                         if (current_mesh_handle->m_UUID.m_has_INDICES == 1)
                         {
                             MathUtil::glFuncs->glDrawElementsInstanced(current_mode, current_primitive_count, GL_UNSIGNED_INT, 0, instance_count);
@@ -1748,11 +1743,11 @@ void AbstractRenderer::RenderObjectsStereoViewportInstanced(AbstractRenderer * p
 #endif
 }
 
-void AbstractRenderer::RenderObjectsNaive(RENDERER::RENDER_SCOPE const , std::vector<AbstractRenderCommand> const & , std::unordered_map<StencilReferenceValue, LightContainer> const & )
+void AbstractRenderer::RenderObjectsNaive(RENDERER::RENDER_SCOPE const , QVector<AbstractRenderCommand> const & , QHash<StencilReferenceValue, LightContainer> const & )
 {
     /*uint32_t camera_count = 0;
 
-    std::vector<float> viewports;
+    QVector<float> viewports;
     viewports.reserve(m_cameras_cache[m_main_thread_renderer->m_rendering_index].size() * 4);
 
     GetViewportsAndCameraCount(viewports, p_scope, camera_count);
@@ -2058,20 +2053,19 @@ void AbstractRenderer::RenderObjectsNaive(RENDERER::RENDER_SCOPE const , std::ve
     m_update_GPU_state = false;*/
 }
 
-void AbstractRenderer::RenderObjectsNaiveDecoupled(AbstractRenderer * p_main_thread_renderer,
-                                                   const RENDERER::RENDER_SCOPE p_scope,
-                                                   const std::vector<AbstractRenderCommand> &p_object_render_commands,
-                                                   const std::unordered_map<StencilReferenceValue, LightContainer> &p_scoped_light_containers)
+void AbstractRenderer::RenderObjectsNaiveDecoupled(const RENDERER::RENDER_SCOPE p_scope,
+                                                   const QVector<AbstractRenderCommand> &p_object_render_commands,
+                                                   const QHash<StencilReferenceValue, LightContainer> &p_scoped_light_containers)
 {
     const size_t camera_count_this_scope = m_per_frame_scoped_cameras_view_matrix[static_cast<size_t>(p_scope)].size();
 
-    std::vector<float> viewports;
+    QVector<float> viewports;
     viewports.reserve(camera_count_this_scope);
 
     QVector4D viewport;
     for (size_t camera_index = 0; camera_index < camera_count_this_scope; camera_index++)
     {
-        VirtualCamera& camera = p_main_thread_renderer->m_scoped_cameras_cache[p_main_thread_renderer->m_rendering_index][static_cast<size_t>(p_scope)][camera_index];
+        VirtualCamera& camera = m_scoped_cameras_cache[m_rendering_index][static_cast<size_t>(p_scope)][camera_index];
         viewport = camera.GetViewport();
         viewports.push_back(viewport.x());
         viewports.push_back(viewport.y());
@@ -2098,7 +2092,7 @@ void AbstractRenderer::RenderObjectsNaiveDecoupled(AbstractRenderer * p_main_thr
     {
         if (camera_count_this_scope == 0)
         {
-            MathUtil::glFuncs->glViewport(0, 0, p_main_thread_renderer->m_window_width, p_main_thread_renderer->m_window_height);
+            MathUtil::glFuncs->glViewport(0, 0, m_window_width, m_window_height);
         }
         else
         {
@@ -2132,13 +2126,13 @@ void AbstractRenderer::RenderObjectsNaiveDecoupled(AbstractRenderer * p_main_thr
 
     bool is_left_eye = true;
     GLuint current_programID = 0;
-    std::vector<GLfloat> default_color;
+    QVector<GLfloat> default_color;
     default_color.resize(4);
     default_color[0] = 1.0f;
     default_color[1] = 1.0f;
     default_color[2] = 1.0f;
     default_color[3] = 1.0f;
-    std::vector<GLfloat> default_normal;
+    QVector<GLfloat> default_normal;
     default_normal.resize(4);
     default_normal[0] = 0.0f;
     default_normal[1] = 0.0f;
@@ -2214,7 +2208,7 @@ void AbstractRenderer::RenderObjectsNaiveDecoupled(AbstractRenderer * p_main_thr
                 SetStencilOp(stencil_op);
 
                 // Bind new shader if necessary
-                GLuint programID = p_main_thread_renderer->GetProgramHandleID(current_render_command.m_shader);
+                GLuint programID = GetProgramHandleID(current_render_command.m_shader);
                 bool shader_changed = false;
                 if (programID != 0) // Skip when an invalid program ID is passed
                 {
@@ -2234,7 +2228,7 @@ void AbstractRenderer::RenderObjectsNaiveDecoupled(AbstractRenderer * p_main_thr
 						)
                     {
                         ((AssetShader_Frame *)frame_uniforms)->iViewportCount = QVector4D(viewport_count_float, instancing_SSBO_stride, 0.0f, 0.0f);
-                        p_main_thread_renderer->UpdateFrameUniforms(current_programID, frame_uniforms);
+                        UpdateFrameUniforms(current_programID, frame_uniforms);
                         current_frame_uniforms = frame_uniforms;
                     }
 
@@ -2242,7 +2236,7 @@ void AbstractRenderer::RenderObjectsNaiveDecoupled(AbstractRenderer * p_main_thr
                     AssetShader_Room const * room_uniforms = current_render_command.GetRoomUniformsPointer();
                     if(current_room_uniforms == nullptr || *room_uniforms != *current_room_uniforms || shader_changed == true)
                     {
-                        p_main_thread_renderer->UpdateRoomUniforms(current_programID, room_uniforms);
+                        UpdateRoomUniforms(current_programID, room_uniforms);
                         current_room_uniforms = room_uniforms;
                     }
 
@@ -2250,14 +2244,15 @@ void AbstractRenderer::RenderObjectsNaiveDecoupled(AbstractRenderer * p_main_thr
                     if (current_stencil_ref != stencil_ref)
                     {
                         current_stencil_ref = stencil_ref;
-                        auto itr = p_scoped_light_containers.find(current_stencil_ref);
+                        QHash<StencilReferenceValue, LightContainer>::const_iterator itr = p_scoped_light_containers.find(current_stencil_ref);
                         if (itr != p_scoped_light_containers.end())
                         {
-                            p_main_thread_renderer->PushNewLightData(&(itr->second));
+//                            p_main_thread_renderer->PushNewLightData(&(itr->second));
+                            PushNewLightData(&(itr.value()));
                         }
                         else
                         {
-                            p_main_thread_renderer->PushNewLightData(&m_empty_light_container);
+                            PushNewLightData(&m_empty_light_container);
                         }
                     }
 
@@ -2265,7 +2260,7 @@ void AbstractRenderer::RenderObjectsNaiveDecoupled(AbstractRenderer * p_main_thr
                     AssetShader_Object const * object_uniforms = current_render_command.GetObjectUniformsPointer();
                     if (current_object_uniforms == nullptr || *object_uniforms != *current_object_uniforms || shader_changed == true)
                     {
-                        p_main_thread_renderer->UpdateObjectUniforms(current_programID, object_uniforms);
+                        UpdateObjectUniforms(current_programID, object_uniforms);
                         current_object_uniforms = object_uniforms;
                     }
 
@@ -2273,7 +2268,7 @@ void AbstractRenderer::RenderObjectsNaiveDecoupled(AbstractRenderer * p_main_thr
                     AssetShader_Material const * material_uniforms = current_render_command.GetMaterialUniformsPointer();
                     if (current_material_uniforms == nullptr || *material_uniforms != *current_material_uniforms || shader_changed == true)
                     {
-                        p_main_thread_renderer->UpdateMaterialUniforms(current_programID, material_uniforms);
+                        UpdateMaterialUniforms(current_programID, material_uniforms);
                         current_material_uniforms = material_uniforms;
                     }
 
@@ -2286,7 +2281,7 @@ void AbstractRenderer::RenderObjectsNaiveDecoupled(AbstractRenderer * p_main_thr
                             continue;
                         }
 
-                        BindTextureHandleRef(&(p_main_thread_renderer->m_texture_handle_to_GL_ID), texture_slot, texture_handle_ref);
+                        BindTextureHandleRef(&(m_texture_handle_to_GL_ID), texture_slot, texture_handle_ref);
                     }
 
                     // Render object
@@ -2296,9 +2291,9 @@ void AbstractRenderer::RenderObjectsNaiveDecoupled(AbstractRenderer * p_main_thr
                     if (current_primitive_count != 0)
                     {
                         auto current_mesh_handle = current_render_command.m_mesh_handle;
-                        if (current_mesh_handle != nullptr && p_main_thread_renderer)
+                        if (current_mesh_handle != nullptr)
                         {
-                            p_main_thread_renderer->BindMeshHandle(current_mesh_handle);
+                            BindMeshHandle(current_mesh_handle);
                             if (current_mesh_handle->m_UUID.m_has_INDICES == 1)
                             {
                                 MathUtil::glFuncs->glDrawElements(current_mode, current_primitive_count, GL_UNSIGNED_INT, 0);
@@ -2375,13 +2370,13 @@ void AbstractRenderer::CopyDataBetweenBuffers(GLuint p_src, GLuint p_dst, GLsize
     }
 }
 
-void AbstractRenderer::CreateShadowVAO(GLuint p_VAO, std::vector<GLuint> p_VBOs)
+void AbstractRenderer::CreateShadowVAO(GLuint p_VAO, QVector<GLuint> p_VBOs)
 {
     Q_UNUSED(p_VAO);
     Q_UNUSED(p_VBOs);
 }
 
-void AbstractRenderer::CreateShadowFBO(GLuint p_FBO, std::vector<GLuint> p_texture_ids)
+void AbstractRenderer::CreateShadowFBO(GLuint p_FBO, QVector<GLuint> p_texture_ids)
 {
     Q_UNUSED(p_FBO);
     Q_UNUSED(p_texture_ids);
@@ -2501,17 +2496,17 @@ size_t AbstractRenderer::GetNumTextures() const
     return m_texture_handle_to_GL_ID.size() - m_num_deleted_textures;
 }
 
-std::vector<uint64_t> & AbstractRenderer::GetGPUTimeQueryResults()
+QVector<uint64_t> & AbstractRenderer::GetGPUTimeQueryResults()
 {
     return m_GPUTimeQueryResults;
 }
 
-std::vector<uint64_t> & AbstractRenderer::GetCPUTimeQueryResults()
+QVector<uint64_t> & AbstractRenderer::GetCPUTimeQueryResults()
 {
     return m_CPUTimeQueryResults;
 }
 
-void AbstractRenderer::SetCameras(std::vector<VirtualCamera> *p_cameras)
+void AbstractRenderer::SetCameras(QVector<VirtualCamera> *p_cameras)
 {
     for (size_t scope_enum = 0; scope_enum < static_cast<size_t>(RENDERER::RENDER_SCOPE::SCOPE_COUNT); ++scope_enum)
     {
@@ -2523,7 +2518,7 @@ void AbstractRenderer::SetCameras(std::vector<VirtualCamera> *p_cameras)
         {
             if ((*p_cameras)[cam_index].GetScopeMask(static_cast<RENDERER::RENDER_SCOPE>(scope_enum)) == true)
             {
-                m_scoped_cameras_cache[m_current_submission_index][scope_enum].emplace_back((*p_cameras)[cam_index]);
+                m_scoped_cameras_cache[m_current_submission_index][scope_enum].push_back((*p_cameras)[cam_index]);
             }
         }
     }
@@ -2539,7 +2534,7 @@ TextureHandle* AbstractRenderer::GetDefaultFontGlyphAtlas()
 	return m_default_font_glyph_atlas.get();
 }
 
-/*std::vector<VirtualCamera> const & AbstractRenderer::GetCameras() const
+/*QVector<VirtualCamera> const & AbstractRenderer::GetCameras() const
 {
     return  m_cameras_cache[m_rendering_index];
 }
@@ -2585,7 +2580,7 @@ std::shared_ptr<ProgramHandle> AbstractRenderer::CompileAndLinkShaderProgram(QBy
             shader_failed = true;
             int log_length;
             MathUtil::glFuncs->glGetShaderiv(vertex_shader_id, GL_INFO_LOG_LENGTH, &log_length);
-            std::vector<char> vertex_shader_log((log_length > 1) ? log_length : 1);
+            QVector<char> vertex_shader_log((log_length > 1) ? log_length : 1);
             MathUtil::glFuncs->glGetShaderInfoLog(vertex_shader_id, log_length, NULL, &vertex_shader_log[0]);
             MathUtil::ErrorLog(QString("Compilation of vertex shader \"") + p_vertex_shader_path + QString("\" failed:") + QString("\n") + vertex_shader_log.data());
         }
@@ -2614,7 +2609,7 @@ std::shared_ptr<ProgramHandle> AbstractRenderer::CompileAndLinkShaderProgram(QBy
             shader_failed = true;
             int log_length;
             MathUtil::glFuncs->glGetShaderiv(vertex_shader_id, GL_INFO_LOG_LENGTH, &log_length);
-            std::vector<char> vertex_shader_log((log_length > 1) ? log_length : 1);
+            QVector<char> vertex_shader_log((log_length > 1) ? log_length : 1);
             MathUtil::glFuncs->glGetShaderInfoLog(vertex_shader_id, log_length, NULL, &vertex_shader_log[0]);
             MathUtil::ErrorLog(QString("Compilation of vertex shader \"") + default_object_vertex_shader_path + QString("\" failed:") + QString("\n") + vertex_shader_log.data());
         }
@@ -2642,7 +2637,7 @@ std::shared_ptr<ProgramHandle> AbstractRenderer::CompileAndLinkShaderProgram(QBy
             shader_failed = true;
             int log_length;
             MathUtil::glFuncs->glGetShaderiv(fragment_shader_id, GL_INFO_LOG_LENGTH, &log_length);
-            std::vector<char> fragment_shader_lod((log_length > 1) ? log_length : 1);
+            QVector<char> fragment_shader_lod((log_length > 1) ? log_length : 1);
             MathUtil::glFuncs->glGetShaderInfoLog(fragment_shader_id, log_length, NULL, &fragment_shader_lod[0]);
             MathUtil::ErrorLog(QString("Compilation of fragment shader \"") + p_fragment_shader_path + QString("\" failed:") + QString("\n") + fragment_shader_lod.data());
         }
@@ -2671,7 +2666,7 @@ std::shared_ptr<ProgramHandle> AbstractRenderer::CompileAndLinkShaderProgram(QBy
             shader_failed = true;
             int log_length;
             MathUtil::glFuncs->glGetShaderiv(fragment_shader_id, GL_INFO_LOG_LENGTH, &log_length);
-            std::vector<char> fragment_shader_lod((log_length > 1) ? log_length : 1);
+            QVector<char> fragment_shader_lod((log_length > 1) ? log_length : 1);
             MathUtil::glFuncs->glGetShaderInfoLog(fragment_shader_id, log_length, NULL, &fragment_shader_lod[0]);
             MathUtil::ErrorLog(QString("Error: Compilation of fragment shader \"") + default_object_fragment_shader_path + QString("\" failed:") + QString("\n") + fragment_shader_lod.data());
         }
@@ -2688,7 +2683,7 @@ std::shared_ptr<ProgramHandle> AbstractRenderer::CompileAndLinkShaderProgram(QBy
 		{
             int log_length;
             MathUtil::glFuncs->glGetProgramiv(program_id, GL_INFO_LOG_LENGTH, &log_length);
-            std::vector<char> program_log( (log_length > 1) ? log_length : 1 );
+            QVector<char> program_log( (log_length > 1) ? log_length : 1 );
             MathUtil::glFuncs->glGetProgramInfoLog(program_id, log_length, NULL, &program_log[0]);
 
             shader_failed = true;
@@ -2705,7 +2700,7 @@ std::shared_ptr<ProgramHandle> AbstractRenderer::CompileAndLinkShaderProgram(QBy
 	{
         int log_length;
         MathUtil::glFuncs->glGetProgramiv(program_id, GL_INFO_LOG_LENGTH, &log_length);
-        std::vector<char> program_log( (log_length > 1) ? log_length : 1 );
+        QVector<char> program_log( (log_length > 1) ? log_length : 1 );
         MathUtil::glFuncs->glGetProgramInfoLog(program_id, log_length, NULL, &program_log[0]);;
 //        MathUtil::ErrorLog(QString("Linking of shaders \"") + p_vertex_shader_path + QString("\" & \"") + p_fragment_shader_path + QString("\" successful:") + QString("\n") + program_log.data());
 
@@ -2725,36 +2720,32 @@ std::shared_ptr<TextureHandle> AbstractRenderer::CreateTextureHandle(TextureHand
     uint32_t p_width,
     uint32_t p_height,
     GLuint p_GL_texture_ID)
-{
-    Q_ASSERT_X(m_main_thread_renderer == this, "CreateTextureHandle", "Not called from m_main_thread_renderer");
-
-    std::pair<TextureHandle*, GLuint> texture_pair;
+{    
+    QPair<TextureHandle*, GLuint> texture_pair;
 	texture_pair.first = new TextureHandle(m_texture_UUID, p_texture_type, p_color_space, p_alpha_type);
     texture_pair.second = p_GL_texture_ID;
 
     m_texture_UUID++;
 
-    std::pair<TextureHandle*, uint32_t> width_pair;
+    QPair<TextureHandle*, uint32_t> width_pair;
     width_pair.first = texture_pair.first;
     width_pair.second = p_width;
 
-    std::pair<TextureHandle*, uint32_t> height_pair;
+    QPair<TextureHandle*, uint32_t> height_pair;
     height_pair.first = texture_pair.first;
     height_pair.second = p_height;
 
     if (m_texture_handle_to_GL_ID.capacity() == m_texture_handle_to_GL_ID.size())
-    {
-        m_reallocation_guard.lock();
+    {        
         m_mesh_handle_to_buffers.reserve(m_mesh_handle_to_buffers.size() + 128);
         m_texture_handle_to_width.reserve(m_texture_handle_to_width.size() + 128);
-        m_texture_handle_to_height.reserve(m_texture_handle_to_height.size() + 128);
-        m_reallocation_guard.unlock();
+        m_texture_handle_to_height.reserve(m_texture_handle_to_height.size() + 128);        
     }
 
-    m_texture_handle_to_GL_ID.emplace_back(texture_pair);
+    m_texture_handle_to_GL_ID.push_back(texture_pair);
     texture_pair.first->m_last_known_index = (m_texture_handle_to_GL_ID.size() - 1);
-    m_texture_handle_to_width.emplace_back(width_pair);
-    m_texture_handle_to_height.emplace_back(height_pair);
+    m_texture_handle_to_width.push_back(width_pair);
+    m_texture_handle_to_height.push_back(height_pair);
 
     TextureHandle* tex_address = m_texture_handle_to_GL_ID.back().first;
 
@@ -2775,8 +2766,7 @@ std::shared_ptr<TextureHandle> AbstractRenderer::CreateTextureHandle(TextureHand
 }
 
 void AbstractRenderer::RemoveTextureHandleFromMap(TextureHandle* p_handle)
-{
-    Q_ASSERT_X(m_main_thread_renderer == this, "RemoveTextureHandleFromMap", "Not called from m_main_thread_renderer");
+{    
     if (p_handle == nullptr)
     {
         qDebug() << QString("ERROR!: RemoveTextureHandleFromMap:: p_handle was nullptr");
@@ -2789,7 +2779,7 @@ void AbstractRenderer::RemoveTextureHandleFromMap(TextureHandle* p_handle)
     {
         if (m_texture_handle_to_GL_ID[itr].first == p_handle && m_texture_handle_to_GL_ID[itr].first->m_UUID.m_UUID == p_handle->m_UUID.m_UUID)
         {
-            std::pair<TextureHandle*, GLuint>& texture_pair = m_texture_handle_to_GL_ID[itr];
+            QPair<TextureHandle*, GLuint>& texture_pair = m_texture_handle_to_GL_ID[itr];
             texture_pair.first->m_last_known_index = itr;
             m_texture_deletion_guard.lock();
 
@@ -2799,7 +2789,7 @@ void AbstractRenderer::RemoveTextureHandleFromMap(TextureHandle* p_handle)
         + "UUID: " + QString::number(texture_UUID.m_UUID) + " "
         + "GPUHandle: " + QString::number((uint32_t)texture_pair.second);
 #endif
-            m_textures_pending_deletion.emplace_back(texture_pair.first);
+            m_textures_pending_deletion.push_back(texture_pair.first);
             m_texture_deletion_guard.unlock();
             return;
         }
@@ -2813,7 +2803,7 @@ void AbstractRenderer::FreeTextureHandles()
     for (size_t i = 0; i < texture_count; ++i)
     {
         size_t const last_index = m_textures_pending_deletion[i]->m_last_known_index;
-        std::pair<TextureHandle*, GLuint>& texture_pair = m_texture_handle_to_GL_ID[last_index];
+        QPair<TextureHandle*, GLuint>& texture_pair = m_texture_handle_to_GL_ID[last_index];
 
 #ifdef QT_DEBUG
     auto texture_UUID = texture_pair.first->GetUUID();
@@ -2837,7 +2827,7 @@ void AbstractRenderer::FreeTextureHandles()
     m_texture_deletion_guard.unlock();
 }
 
-std::vector<std::shared_ptr<BufferHandle>>* AbstractRenderer::GetBufferHandlesForMeshHandle(MeshHandle * p_mesh_handle)
+QVector<std::shared_ptr<BufferHandle>>* AbstractRenderer::GetBufferHandlesForMeshHandle(MeshHandle * p_mesh_handle)
 {
     const size_t mesh_count = m_mesh_handle_to_buffers.size();
     for (size_t itr = 0; itr < mesh_count; ++itr)
@@ -2956,10 +2946,8 @@ std::shared_ptr<MeshHandle> AbstractRenderer::CreateMeshHandle(VertexAttributeLa
 }
 
 std::shared_ptr<MeshHandle> AbstractRenderer::CreateMeshHandle(VertexAttributeLayout p_layout, GLuint p_GL_VAO_ID)
-{
-    Q_ASSERT_X(m_main_thread_renderer == this, "CreateMeshHandle", "Not called from m_main_thread_renderer");
-
-    std::pair<MeshHandle*, GLuint> mesh_pair;
+{    
+    QPair<MeshHandle*, GLuint> mesh_pair;
     mesh_pair.first = new MeshHandle(m_mesh_UUID,
         p_layout.attributes[(uint32_t)VAO_ATTRIB::POSITION].in_use,
         p_layout.attributes[(uint32_t)VAO_ATTRIB::NORMAL].in_use,
@@ -2980,13 +2968,11 @@ std::shared_ptr<MeshHandle> AbstractRenderer::CreateMeshHandle(VertexAttributeLa
     m_mesh_UUID++;
 
     if (m_mesh_handle_to_GL_ID.capacity() == m_mesh_handle_to_GL_ID.size())
-    {
-        m_reallocation_guard.lock();
+    {        
         m_mesh_handle_to_GL_ID.reserve(m_mesh_handle_to_GL_ID.size() + 128);
-        m_reallocation_guard.unlock();
     }
 
-    m_mesh_handle_to_GL_ID.emplace_back(mesh_pair);
+    m_mesh_handle_to_GL_ID.push_back(mesh_pair);
     mesh_pair.first->m_last_known_index = (m_mesh_handle_to_GL_ID.size() - 1);
 
     MeshHandle* mesh_address = m_mesh_handle_to_GL_ID.back().first;
@@ -3002,7 +2988,7 @@ std::shared_ptr<MeshHandle> AbstractRenderer::CreateMeshHandle(VertexAttributeLa
 
     uint32_t const num_attribs = (uint32_t)VAO_ATTRIB::NUM_ATTRIBS;
 
-    std::vector<std::shared_ptr<BufferHandle>> buffer_handles;
+    QVector<std::shared_ptr<BufferHandle>> buffer_handles;
     buffer_handles.resize(num_attribs);
 
     for (uint32_t attrib_index = 0; attrib_index < num_attribs; ++ attrib_index)
@@ -3011,7 +2997,7 @@ std::shared_ptr<MeshHandle> AbstractRenderer::CreateMeshHandle(VertexAttributeLa
         {
             if (attrib_index == (uint32_t)VAO_ATTRIB::INDICES)
             {
-                buffer_handles[attrib_index] = (m_main_thread_renderer->CreateBufferHandle(BufferHandle::BUFFER_TYPE::ELEMENT_ARRAY_BUFFER, BufferHandle::BUFFER_USAGE::STATIC_DRAW));
+                buffer_handles[attrib_index] = (CreateBufferHandle(BufferHandle::BUFFER_TYPE::ELEMENT_ARRAY_BUFFER, BufferHandle::BUFFER_USAGE::STATIC_DRAW));
                 BindBufferHandle(buffer_handles[attrib_index].get());
             }
             else
@@ -3019,7 +3005,7 @@ std::shared_ptr<MeshHandle> AbstractRenderer::CreateMeshHandle(VertexAttributeLa
                 if (buffer_handles[(uint32_t)p_layout.attributes[(uint32_t)attrib_index].buffer_id] == nullptr)
                 {
 
-                    buffer_handles[(uint32_t)p_layout.attributes[(uint32_t)attrib_index].buffer_id] = (m_main_thread_renderer->CreateBufferHandle(BufferHandle::BUFFER_TYPE::ARRAY_BUFFER, BufferHandle::BUFFER_USAGE::STATIC_DRAW));
+                    buffer_handles[(uint32_t)p_layout.attributes[(uint32_t)attrib_index].buffer_id] = (CreateBufferHandle(BufferHandle::BUFFER_TYPE::ARRAY_BUFFER, BufferHandle::BUFFER_USAGE::STATIC_DRAW));
                 }
                 else
                 {
@@ -3050,12 +3036,10 @@ std::shared_ptr<MeshHandle> AbstractRenderer::CreateMeshHandle(VertexAttributeLa
     }
 
     if (m_mesh_handle_to_buffers.capacity() == m_mesh_handle_to_buffers.size())
-    {
-        m_reallocation_guard.lock();
-        m_mesh_handle_to_buffers.reserve(m_mesh_handle_to_buffers.size() + 128);
-        m_reallocation_guard.unlock();
+    {        
+        m_mesh_handle_to_buffers.reserve(m_mesh_handle_to_buffers.size() + 128);        
     }
-    m_mesh_handle_to_buffers.emplace_back(std::pair<MeshHandle*, std::vector<std::shared_ptr<BufferHandle>>>(mesh_address, buffer_handles));
+    m_mesh_handle_to_buffers.push_back(QPair<MeshHandle*, QVector<std::shared_ptr<BufferHandle>>>(mesh_address, buffer_handles));
 
 
 
@@ -3076,7 +3060,7 @@ void AbstractRenderer::FreeMeshHandles()
     for (size_t i = 0; i < mesh_count; ++i)
     {
         size_t const last_index = m_meshes_pending_deletion[i]->m_last_known_index;
-        std::pair<MeshHandle*, GLuint>& mesh_pair = m_mesh_handle_to_GL_ID[last_index];
+        QPair<MeshHandle*, GLuint>& mesh_pair = m_mesh_handle_to_GL_ID[last_index];
 
 #ifdef QT_DEBUG
     auto mesh_UUID = mesh_pair.first->m_UUID;
@@ -3095,7 +3079,6 @@ void AbstractRenderer::FreeMeshHandles()
         // Deref VBOs assosiated with VAO
         m_mesh_handle_to_buffers[last_index].first = nullptr;
         m_mesh_handle_to_buffers[last_index].second.clear();
-        m_mesh_handle_to_buffers[last_index].second.shrink_to_fit();
 
         // Free memory used by MeshHandle
         delete m_meshes_pending_deletion[i];
@@ -3105,8 +3088,7 @@ void AbstractRenderer::FreeMeshHandles()
 }
 
 void AbstractRenderer::RemoveMeshHandleFromMap(MeshHandle* p_handle)
-{
-    Q_ASSERT_X(m_main_thread_renderer == this, "RemoveMeshHandleFromMap", "Not called from m_main_thread_renderer");
+{    
     if (p_handle == nullptr)
     {
         qDebug() << QString("ERROR!: RemoveMeshHandleFromMap:: p_handle was nullptr");
@@ -3119,7 +3101,7 @@ void AbstractRenderer::RemoveMeshHandleFromMap(MeshHandle* p_handle)
     {
         if (m_mesh_handle_to_GL_ID[itr].first == p_handle && m_mesh_handle_to_GL_ID[itr].first->m_UUID.m_UUID == p_handle->m_UUID.m_UUID)
         {
-            std::pair<MeshHandle*, GLuint>& mesh_pair = m_mesh_handle_to_GL_ID[itr];
+            QPair<MeshHandle*, GLuint>& mesh_pair = m_mesh_handle_to_GL_ID[itr];
             mesh_pair.first->m_last_known_index = itr;
 
 #ifdef QT_DEBUG
@@ -3130,7 +3112,7 @@ void AbstractRenderer::RemoveMeshHandleFromMap(MeshHandle* p_handle)
 #endif
 
             m_mesh_deletion_guard.lock();
-            m_meshes_pending_deletion.emplace_back(mesh_pair.first);
+            m_meshes_pending_deletion.push_back(mesh_pair.first);
             m_mesh_deletion_guard.unlock();
             return;
         }
@@ -3144,7 +3126,7 @@ void AbstractRenderer::FreeProgramHandles()
     for (size_t i = 0; i < program_count; ++i)
     {
         size_t const last_index = m_programs_pending_deletion[i]->m_last_known_index;
-        std::pair<ProgramHandle*, GLuint>& program_pair = m_program_handle_to_GL_ID[last_index];
+        QPair<ProgramHandle*, GLuint>& program_pair = m_program_handle_to_GL_ID[last_index];
 
         // Null m_mesh_handle_to_GL_ID ptr
         program_pair.first = nullptr;
@@ -3164,19 +3146,18 @@ void AbstractRenderer::FreeProgramHandles()
 }
 
 void AbstractRenderer::RemoveProgramHandleFromMap(ProgramHandle* p_handle)
-{
-    Q_ASSERT_X(m_main_thread_renderer == this, "RemoveProgramHandleFromMap", "Not called from m_main_thread_renderer");
+{    
     // We keep handles in the vector but clear their contents and add the address to a free list so that it can be reused by a later creation call;
     const size_t program_count = m_program_handle_to_GL_ID.size();
     for (size_t itr = 0; itr < program_count; ++itr)
     {
         if (m_program_handle_to_GL_ID[itr].first == p_handle && m_program_handle_to_GL_ID[itr].first->m_UUID.m_UUID == p_handle->m_UUID.m_UUID)
         {
-            std::pair<ProgramHandle*, GLuint>& program_pair = m_program_handle_to_GL_ID[itr];
+            QPair<ProgramHandle*, GLuint>& program_pair = m_program_handle_to_GL_ID[itr];
             program_pair.first->m_last_known_index = itr;
 
             m_program_deletion_guard.lock();
-            m_programs_pending_deletion.emplace_back(program_pair.first);
+            m_programs_pending_deletion.push_back(program_pair.first);
             m_program_deletion_guard.unlock();
             return;
         }
@@ -3276,7 +3257,7 @@ void AbstractRenderer::InternalFormatFromSize(GLenum* p_pixel_format, uint const
     }
 }
 
-std::shared_ptr<TextureHandle> AbstractRenderer::CreateCubemapTextureHandleFromTextureHandles(QVector<QPointer<AssetImageData>>& p_skybox_image_data, std::vector<TextureHandle*>& p_skybox_image_handles, const bool tex_mipmap, const bool tex_linear, const bool tex_clamp, const TextureHandle::ALPHA_TYPE tex_alpha, const TextureHandle::COLOR_SPACE )
+std::shared_ptr<TextureHandle> AbstractRenderer::CreateCubemapTextureHandleFromTextureHandles(QVector<QPointer<AssetImageData>>& p_skybox_image_data, QVector<TextureHandle*>& p_skybox_image_handles, const bool tex_mipmap, const bool tex_linear, const bool tex_clamp, const TextureHandle::ALPHA_TYPE tex_alpha, const TextureHandle::COLOR_SPACE )
 {
     int w = 0;
     int h = 0;
@@ -4280,7 +4261,7 @@ std::shared_ptr<TextureHandle> AbstractRenderer::CreateCubemapTextureHandle(uint
     return CreateTextureHandle(texture_type, color_space, alpha_type,p_width, p_height, texture_id);
 }
 #ifdef WIN32
-std::vector<std::shared_ptr<TextureHandle>> AbstractRenderer::CreateSlugTextureHandles(uint32_t const p_curve_texture_width,
+QVector<std::shared_ptr<TextureHandle>> AbstractRenderer::CreateSlugTextureHandles(uint32_t const p_curve_texture_width,
                                                                                        uint32_t const p_curve_texture_height,
                                                                                        void const * p_curve_texture,
                                                                                        uint32_t const p_band_texture_width,
@@ -4310,11 +4291,11 @@ std::vector<std::shared_ptr<TextureHandle>> AbstractRenderer::CreateSlugTextureH
     TextureHandle::COLOR_SPACE color_space = TextureHandle::COLOR_SPACE::LINEAR;
     TextureHandle::ALPHA_TYPE alpha_type = TextureHandle::ALPHA_TYPE::CUTOUT;
 
-    std::vector<std::shared_ptr<TextureHandle>> handles;
+    QVector<std::shared_ptr<TextureHandle>> handles;
     handles.reserve(2);
-    handles.emplace_back(CreateTextureHandle(texture_type, color_space, alpha_type,
+    handles.push_back(CreateTextureHandle(texture_type, color_space, alpha_type,
                                           p_curve_texture_width, p_curve_texture_height, texture_ids[0]));
-    handles.emplace_back(CreateTextureHandle(texture_type, color_space, alpha_type,
+    handles.push_back(CreateTextureHandle(texture_type, color_space, alpha_type,
                                           p_band_texture_width, p_band_texture_height, texture_ids[1]));
 
     return handles;
@@ -4399,7 +4380,7 @@ std::shared_ptr<TextureHandle> AbstractRenderer::CreateTextureQImage(const QImag
 
     GLenum internal_format = GL_RGBA8;
     GLenum external_format = GL_RGB;
-    GLenum external_pixel_size = GL_UNSIGNED_BYTE;
+    GLenum external_pixel_size = GL_UNSIGNED_BYTE;    
     switch(img.format())
     {
     case QImage::Format_RGB888:
@@ -4467,15 +4448,15 @@ std::shared_ptr<TextureHandle> AbstractRenderer::CreateTextureQImage(const QImag
 
                 for (int row = 0; row < height; row++)
                 {
-					for (int column = first_alpha_offset; column < width; column += pixel_offset)
-					{
-						uchar const * this_alpha_ptr = &(img_data[row * width + column]);
-						if (this_alpha_ptr != nullptr)
-						{
-							found_zero = (found_zero) ? found_zero : (*this_alpha_ptr == 0x00);
-							found_one = (found_one) ? found_one : (*this_alpha_ptr == 0xff);
-							found_blended = (found_blended) ? found_blended : ((*this_alpha_ptr != 0xff) && (*this_alpha_ptr != 0x00));
-						}
+                    for (int column = first_alpha_offset; column < width; column += pixel_offset)
+                    {
+                        uchar const * this_alpha_ptr = &(img_data[row * width + column]);
+                        if (this_alpha_ptr != nullptr)
+                        {
+                            found_zero = (found_zero) ? found_zero : (*this_alpha_ptr == 0x00);
+                            found_one = (found_one) ? found_one : (*this_alpha_ptr == 0xff);
+                            found_blended = (found_blended) ? found_blended : ((*this_alpha_ptr != 0xff) && (*this_alpha_ptr != 0x00));
+                        }
                     }
                 }
 
@@ -4562,7 +4543,7 @@ void AbstractRenderer::CopyTextureHandleDataToTextureHandle(TextureHandle* p_src
     const size_t tex_count = m_texture_handle_to_GL_ID.size();
     for (size_t itr = 0; itr < tex_count; ++itr)
     {
-        std::pair<TextureHandle*, GLuint>& pair_ref = m_texture_handle_to_GL_ID[itr];
+        QPair<TextureHandle*, GLuint>& pair_ref = m_texture_handle_to_GL_ID[itr];
         itr_pointer = pair_ref.first;
 
         if (itr_pointer->m_UUID.m_UUID == p_src_pointer->m_UUID.m_UUID)
@@ -4591,7 +4572,7 @@ void AbstractRenderer::CopyTextureHandleDataToTextureHandle(TextureHandle* p_src
     }
 }
 
-void AbstractRenderer::CopyReadBufferToTextureHandle(std::vector<std::pair<TextureHandle *, GLuint>> * const , TextureHandle* p_handle, uint32_t p_target, int32_t p_level, int32_t p_dst_x, int32_t p_dst_y, int32_t p_src_x, int32_t p_src_y, int32_t p_src_width, int32_t p_src_height)
+void AbstractRenderer::CopyReadBufferToTextureHandle(QVector<QPair<TextureHandle *, GLuint>> * const , TextureHandle* p_handle, uint32_t p_target, int32_t p_level, int32_t p_dst_x, int32_t p_dst_y, int32_t p_src_x, int32_t p_src_y, int32_t p_src_width, int32_t p_src_height)
 {
     if (p_handle) {
         MathUtil::glFuncs->glCopyTexSubImage2D(p_target, p_level, p_dst_x, p_dst_y, p_src_x, p_src_y, p_src_width, p_src_height);
@@ -4601,12 +4582,10 @@ void AbstractRenderer::CopyReadBufferToTextureHandle(std::vector<std::pair<Textu
 std::shared_ptr<BufferHandle> AbstractRenderer::CreateBufferHandle(
 	BufferHandle::BUFFER_TYPE const p_buffer_type,
 	BufferHandle::BUFFER_USAGE const p_buffer_usage)
-{ 
-    Q_ASSERT_X(m_main_thread_renderer == this, "CreateBufferHandle", "Not called from m_main_thread_renderer");
-
+{     
     GLuint buffer_GL_ID;
 	MathUtil::glFuncs->glGenBuffers(1, &buffer_GL_ID);
-	std::pair<BufferHandle*, GLuint> buffer_pair;
+    QPair<BufferHandle*, GLuint> buffer_pair;
 	buffer_pair.first = new BufferHandle(m_buffer_UUID, p_buffer_type, p_buffer_usage);
 	buffer_pair.second = buffer_GL_ID;
 
@@ -4614,12 +4593,10 @@ std::shared_ptr<BufferHandle> AbstractRenderer::CreateBufferHandle(
 
     if (m_buffer_handle_to_GL_ID.capacity() == m_buffer_handle_to_GL_ID.size())
     {
-        m_reallocation_guard.lock();
         m_buffer_handle_to_GL_ID.reserve(m_buffer_handle_to_GL_ID.size() + 128);
-        m_reallocation_guard.unlock();
     }
 
-    m_buffer_handle_to_GL_ID.emplace_back(buffer_pair);
+    m_buffer_handle_to_GL_ID.push_back(buffer_pair);
     buffer_pair.first->m_last_known_index = (m_buffer_handle_to_GL_ID.size() - 1);
 
 	BufferHandle* mesh_address = m_buffer_handle_to_GL_ID.back().first;
@@ -4646,7 +4623,7 @@ void AbstractRenderer::FreeBufferHandles()
     for (size_t i = 0; i < buffer_count; ++i)
     {
         size_t const last_index = m_buffers_pending_deletion[i]->m_last_known_index;
-        std::pair<BufferHandle*, GLuint>& buffer_pair = m_buffer_handle_to_GL_ID[last_index];
+        QPair<BufferHandle*, GLuint>& buffer_pair = m_buffer_handle_to_GL_ID[last_index];
 
 #ifdef QT_DEBUG
     auto mesh_UUID = buffer_pair.first->m_UUID;
@@ -4670,8 +4647,7 @@ void AbstractRenderer::FreeBufferHandles()
 }
 
 void AbstractRenderer::RemoveBufferHandleFromMap(BufferHandle* p_handle)
-{
-    Q_ASSERT_X(m_main_thread_renderer == this, "RemoveBufferHandleFromMap", "Not called from m_main_thread_renderer");
+{    
     if (p_handle == nullptr)
     {
         qDebug() << QString("ERROR!: RemoveBufferHandleFromMap:: p_handle was nullptr");
@@ -4684,7 +4660,7 @@ void AbstractRenderer::RemoveBufferHandleFromMap(BufferHandle* p_handle)
 	{
         if (m_buffer_handle_to_GL_ID[itr].first == p_handle && m_buffer_handle_to_GL_ID[itr].first->m_UUID.m_UUID == p_handle->m_UUID.m_UUID)
 		{
-            std::pair<BufferHandle*, GLuint>& buffer_pair = m_buffer_handle_to_GL_ID[itr];
+            QPair<BufferHandle*, GLuint>& buffer_pair = m_buffer_handle_to_GL_ID[itr];
             buffer_pair.first->m_last_known_index = itr;
             buffer_pair.first->m_UUID.m_in_use_flag = 0;
 #ifdef QT_DEBUG
@@ -4694,7 +4670,7 @@ void AbstractRenderer::RemoveBufferHandleFromMap(BufferHandle* p_handle)
         + "GPUHandle: " + QString::number((uint32_t)buffer_pair.second);
 #endif
             m_buffer_deletion_guard.lock();
-            m_buffers_pending_deletion.emplace_back(buffer_pair.first);
+            m_buffers_pending_deletion.push_back(buffer_pair.first);
             m_buffer_deletion_guard.unlock();
             return;
 		}
@@ -4702,11 +4678,9 @@ void AbstractRenderer::RemoveBufferHandleFromMap(BufferHandle* p_handle)
 }
 
 std::shared_ptr<ProgramHandle> AbstractRenderer::CreateProgramHandle(uint32_t *p_GPU_ID)
-{
-    Q_ASSERT_X(m_main_thread_renderer == this, "CreateProgramHandle", "Not called from m_main_thread_renderer");
-
+{   
     *p_GPU_ID = MathUtil::glFuncs->glCreateProgram();
-    std::pair<ProgramHandle*, GLuint> buffer_pair;
+    QPair<ProgramHandle*, GLuint> buffer_pair;
     buffer_pair.first = new ProgramHandle(m_shader_UUID);
     buffer_pair.second = *p_GPU_ID;
 
@@ -4714,12 +4688,10 @@ std::shared_ptr<ProgramHandle> AbstractRenderer::CreateProgramHandle(uint32_t *p
 
     if (m_program_handle_to_GL_ID.capacity() == m_program_handle_to_GL_ID.size())
     {
-        m_reallocation_guard.lock();
         m_program_handle_to_GL_ID.reserve(m_program_handle_to_GL_ID.size() + 128);
-        m_reallocation_guard.unlock();
     }
 
-    m_program_handle_to_GL_ID.emplace_back(buffer_pair);
+    m_program_handle_to_GL_ID.push_back(buffer_pair);
 
     ProgramHandle* program_address = m_program_handle_to_GL_ID.back().first;
 
@@ -4884,7 +4856,7 @@ void AbstractRenderer::UpdateFramebuffer()
         size_t const fbo_count = (do_multi_fbos ? 2 : 1);
         m_FBOs.resize(fbo_count);
         m_textures.resize(fbo_count * FBO_TEXTURE::COUNT);
-        m_texture_handles.resize(fbo_count * FBO_TEXTURE::COUNT, std::make_shared<TextureHandle>());
+        m_texture_handles = QVector<std::shared_ptr<TextureHandle>>(fbo_count * FBO_TEXTURE::COUNT, std::make_shared<TextureHandle>());
 
         // For each fbo
         for (uint32_t fbo_index = 0; fbo_index < fbo_count; ++fbo_index)
@@ -4913,7 +4885,7 @@ void AbstractRenderer::UpdateFramebuffer()
                 MathUtil::glFuncs->glTexImage2D(GL_TEXTURE_2D, 0, static_cast<GLint>(GL_RGBA8), m_window_width,  m_window_height, 0, GL_RGBA, GL_UNSIGNED_BYTE, NULL);
             }
 
-            m_texture_handles[fbo_index * FBO_TEXTURE::COUNT + FBO_TEXTURE::COLOR] = m_main_thread_renderer->CreateTextureHandle(TextureHandle::TEXTURE_TYPE::TEXTURE_2D,
+            m_texture_handles[fbo_index * FBO_TEXTURE::COUNT + FBO_TEXTURE::COLOR] = CreateTextureHandle(TextureHandle::TEXTURE_TYPE::TEXTURE_2D,
                                                                                                          TextureHandle::COLOR_SPACE::LINEAR,
                                                                                                          TextureHandle::ALPHA_TYPE::NONE,
                                                                                                          m_window_width, m_window_height,
@@ -5005,7 +4977,7 @@ void AbstractRenderer::UpdateFramebuffer()
                 }
             }
 
-            m_texture_handles[fbo_index * FBO_TEXTURE::COUNT + FBO_TEXTURE::DEPTH_STENCIL] = m_main_thread_renderer->CreateTextureHandle(TextureHandle::TEXTURE_TYPE::TEXTURE_2D,
+            m_texture_handles[fbo_index * FBO_TEXTURE::COUNT + FBO_TEXTURE::DEPTH_STENCIL] = CreateTextureHandle(TextureHandle::TEXTURE_TYPE::TEXTURE_2D,
                                                                                                          TextureHandle::COLOR_SPACE::LINEAR,
                                                                                                          TextureHandle::ALPHA_TYPE::NONE,
                                                                                                          m_window_width, m_window_height,
@@ -5070,7 +5042,7 @@ uint32_t AbstractRenderer::GetTextureID(const FBO_TEXTURE_ENUM p_texture_index, 
     return texture_id;
 }
 
-void AbstractRenderer::BindFBOAndTextures(std::vector<uint32_t> &p_bound_buffers, const uint32_t p_texture_type, const uint32_t p_framebuffer_target, const uint32_t p_fbo, const size_t p_texture_offset, const FBO_TEXTURE_BITFIELD_ENUM p_textures_bitmask) const
+void AbstractRenderer::BindFBOAndTextures(QVector<uint32_t> &p_bound_buffers, const uint32_t p_texture_type, const uint32_t p_framebuffer_target, const uint32_t p_fbo, const size_t p_texture_offset, const FBO_TEXTURE_BITFIELD_ENUM p_textures_bitmask) const
 {
     MathUtil::glFuncs->glBindFramebuffer((GLenum)p_framebuffer_target, (GLuint)p_fbo);
 
@@ -5081,7 +5053,7 @@ void AbstractRenderer::BindFBOAndTextures(std::vector<uint32_t> &p_bound_buffers
                                                   p_texture_type,
                                                   m_textures[FBO_TEXTURE::COLOR + p_texture_offset],
                                                   0);
-        p_bound_buffers.emplace_back(GL_COLOR_ATTACHMENT0);
+        p_bound_buffers.push_back(GL_COLOR_ATTACHMENT0);
     }
 
     if ((p_textures_bitmask & FBO_TEXTURE_BITFIELD::AO) != 0)
@@ -5091,7 +5063,7 @@ void AbstractRenderer::BindFBOAndTextures(std::vector<uint32_t> &p_bound_buffers
                                                   p_texture_type,
                                                   m_textures[FBO_TEXTURE::AO + p_texture_offset],
                                                   0);
-        p_bound_buffers.emplace_back(GL_COLOR_ATTACHMENT1);
+        p_bound_buffers.push_back(GL_COLOR_ATTACHMENT1);
     }
 
     if ((p_textures_bitmask & FBO_TEXTURE_BITFIELD::TRANSMISSION) != 0)
@@ -5101,7 +5073,7 @@ void AbstractRenderer::BindFBOAndTextures(std::vector<uint32_t> &p_bound_buffers
                                                   p_texture_type,
                                                   m_textures[FBO_TEXTURE::TRANSMISSION + p_texture_offset],
                                                   0);
-        p_bound_buffers.emplace_back(GL_COLOR_ATTACHMENT2);
+        p_bound_buffers.push_back(GL_COLOR_ATTACHMENT2);
     }
 
     if ((p_textures_bitmask & FBO_TEXTURE_BITFIELD::MODULATION_DIFFUSION) != 0)
@@ -5111,7 +5083,7 @@ void AbstractRenderer::BindFBOAndTextures(std::vector<uint32_t> &p_bound_buffers
                                                   p_texture_type,
                                                   m_textures[FBO_TEXTURE::MODULATION_DIFFUSION + p_texture_offset],
                                                   0);
-        p_bound_buffers.emplace_back(GL_COLOR_ATTACHMENT3);
+        p_bound_buffers.push_back(GL_COLOR_ATTACHMENT3);
     }
 
     if ((p_textures_bitmask & FBO_TEXTURE_BITFIELD::DELTA) != 0)
@@ -5121,7 +5093,7 @@ void AbstractRenderer::BindFBOAndTextures(std::vector<uint32_t> &p_bound_buffers
                                                   p_texture_type,
                                                   m_textures[FBO_TEXTURE::DELTA + p_texture_offset],
                                                   0);
-        p_bound_buffers.emplace_back(GL_COLOR_ATTACHMENT4);
+        p_bound_buffers.push_back(GL_COLOR_ATTACHMENT4);
     }
 
     if ((p_textures_bitmask & FBO_TEXTURE_BITFIELD::COMPOSITED) != 0)
@@ -5131,7 +5103,7 @@ void AbstractRenderer::BindFBOAndTextures(std::vector<uint32_t> &p_bound_buffers
                                                   p_texture_type,
                                                   m_textures[FBO_TEXTURE::COMPOSITED + p_texture_offset],
                                                   0);
-        p_bound_buffers.emplace_back(GL_COLOR_ATTACHMENT5);
+        p_bound_buffers.push_back(GL_COLOR_ATTACHMENT5);
     }
 
 
@@ -5151,7 +5123,7 @@ void AbstractRenderer::BlitMultisampledFramebuffer(const FBO_TEXTURE_BITFIELD_EN
     {
         if (m_msaa_count > 0)
         {
-            std::vector<GLenum> read_buffers = BindFBOToRead(p_textures_bitmask, true);
+            QVector<GLenum> read_buffers = BindFBOToRead(p_textures_bitmask, true);
             BindFBOToDraw(p_textures_bitmask, false);
 
             size_t const read_buffers_size = read_buffers.size();
@@ -5179,9 +5151,9 @@ void AbstractRenderer::BlitMultisampledFramebuffer(const FBO_TEXTURE_BITFIELD_EN
     BlitMultisampledFramebuffer(p_textures_bitmask, 0, 0, m_window_width, m_window_height, 0, 0, m_window_width, m_window_height);
 }
 
-std::vector<uint32_t> AbstractRenderer::BindFBOToRead(FBO_TEXTURE_BITFIELD_ENUM const p_textures_bitmask, bool const p_bind_multisampled/* = true*/)
+QVector<uint32_t> AbstractRenderer::BindFBOToRead(FBO_TEXTURE_BITFIELD_ENUM const p_textures_bitmask, bool const p_bind_multisampled/* = true*/)
 {
-    std::vector<uint32_t> read_buffers;
+    QVector<uint32_t> read_buffers;
 
     UpdateFramebuffer();
     if (m_framebuffer_initialized)
@@ -5210,9 +5182,9 @@ std::vector<uint32_t> AbstractRenderer::BindFBOToRead(FBO_TEXTURE_BITFIELD_ENUM 
     return read_buffers;
 }
 
-std::vector<uint32_t> AbstractRenderer::BindFBOToDraw(FBO_TEXTURE_BITFIELD_ENUM const p_textures_bitmask, bool const p_bind_multisampled/* = true*/)
+QVector<uint32_t> AbstractRenderer::BindFBOToDraw(FBO_TEXTURE_BITFIELD_ENUM const p_textures_bitmask, bool const p_bind_multisampled/* = true*/)
 {
-    std::vector<uint32_t> draw_buffers;
+    QVector<uint32_t> draw_buffers;
 
     UpdateFramebuffer();
     if (m_framebuffer_initialized)
@@ -5248,17 +5220,15 @@ std::vector<uint32_t> AbstractRenderer::BindFBOToDraw(FBO_TEXTURE_BITFIELD_ENUM 
     return draw_buffers;
 }
 
-void AbstractRenderer::CacheUniformLocations(GLuint p_program, std::vector<std::vector<GLint>> * const p_map)
+void AbstractRenderer::CacheUniformLocations(GLuint p_program, QVector<QVector<GLint>> * const p_map)
 {
     GLint loc = -1;
 
     if ((*p_map).size() <= p_program)
     {
-        m_reallocation_guard.lock();
         (*p_map).resize(p_program + 128); // Allocate 128 here so that we aren't reallocating frequently
-        m_reallocation_guard.unlock();
     }
-    (*p_map)[p_program].resize(count, -1);
+    (*p_map)[p_program] = QVector<GLint>(count, -1);
 
     // Frame Uniforms
     loc = MathUtil::glFuncs->glGetUniformLocation(p_program, "iLeftEye");

@@ -49,27 +49,6 @@ public:
 
     void Copy(const QPointer <RoomObject> obj);
 
-    void SetV(const char * name, QVector3D v);
-    QVector3D GetV(const char * name) const;
-
-    void SetV4(const char * name, QVector4D v);
-    QVector4D GetV4(const char * name) const;
-
-    void SetF(const char * name, float v);
-    float GetF(const char * name) const;
-
-    void SetI(const char * name, int v);
-    int GetI(const char * name) const;
-
-    void SetB(const char * name, bool v);
-    bool GetB(const char * name) const;
-
-    void SetS(const char * name, QString v);
-    QString GetS(const char * name) const;
-
-    void SetC(const char * name, QColor v);
-    QColor GetC(const char * name) const;
-
     void SetInterpolation();
 
     void Clear();
@@ -80,8 +59,11 @@ public:
     void SetProperties(QVariantMap d);
     QPointer <DOMNode> GetProperties();
 
-    void SetType(const QString t);        
-    QString GetType() const;    
+    void SetType(const ElementType t);
+    ElementType GetType() const;
+
+    void SetInterfaceObject(const bool b);
+    bool GetInterfaceObject() const;
 
     bool GetRaycastIntersection(const QMatrix4x4 transform, QList <QVector3D> & int_verts, QList <QVector3D> & int_normals, QList <QVector2D> & int_texcoords);
 
@@ -100,14 +82,12 @@ public:
     void SetDir(const QVector3D & p);
     QVector3D GetDir() const;
 
-    void SetXDirs(const QString & sx, const QString & sy, const QString & sz);
-    void SetXDirs(const QVector3D & x, const QVector3D & y, const QVector3D & z);
     void SnapXDirsToMajorAxis();
 
     inline QVector3D GetXDir() const
     {
-        QVector3D xdir = GetV("xdir");
-        if (interpolate && interp_val < 1.0f) {
+        QVector3D xdir = props->GetXDir()->toQVector3D();
+        if (props->GetInterpolate() && interp_val < 1.0f) {
             return (interp_xdir * (1.0f - interp_val) + xdir * interp_val).normalized();
         }        
         return xdir;
@@ -115,8 +95,8 @@ public:
 
     QVector3D GetYDir() const
     {
-        QVector3D ydir = GetV("ydir");
-        if (interpolate && interp_val < 1.0f) {
+        QVector3D ydir = props->GetYDir()->toQVector3D();
+        if (props->GetInterpolate()  && interp_val < 1.0f) {
             return (interp_ydir * (1.0f - interp_val) + ydir * interp_val).normalized();
         }
         return ydir;
@@ -124,8 +104,8 @@ public:
 
     QVector3D GetZDir() const
     {
-        QVector3D zdir = GetV("zdir");
-        if (interpolate && interp_val < 1.0f) {
+        QVector3D zdir = props->GetZDir()->toQVector3D();
+        if (props->GetInterpolate()  && interp_val < 1.0f) {
             return (interp_zdir * (1.0f - interp_val) + zdir * interp_val).normalized();
         }
         return zdir;
@@ -136,8 +116,8 @@ public:
 
     inline QVector3D GetScale() const
     {
-        QVector3D scale = GetV("scale");
-        if (interpolate && interp_val < 1.0f) {
+        QVector3D scale = props->GetScale()->toQVector3D();
+        if (props->GetInterpolate()  && interp_val < 1.0f) {
             return interp_scale * (1.0f - interp_val) + scale * interp_val;
         }        
         return scale;
@@ -155,11 +135,12 @@ public:
     bool GetPlaySounds() const;
 
     void ReadXMLCode(const QString & str);
-
-    QVariantMap GetJSONCode(const bool show_defaults = false) const;
     QString GetXMLCode(const bool show_defaults = false) const;
 
-    void Update(const double dt_sec);    
+    QVariantMap GetJSONCode(const bool show_defaults) const;
+
+    void Update(const double dt_sec);
+    void UpdateMedia();
 
     void DoLoadEffect() const;   
 
@@ -184,9 +165,6 @@ public:
     //unique to ghost
     void SetHMDType(const QString & s);
     QString GetHMDType() const;   
-
-    void SetEyePos(const QVector3D & p);
-    QVector3D GetEyePos() const;
 
     void SetUserIDPos(const QVector3D & p);
     QVector3D GetUserIDPos() const;
@@ -279,9 +257,6 @@ public:
     void SetInterpTime(const float f);
     float GetInterpTime() const;
 
-    void SetInterpolate(const bool b);
-    bool GetInterpolate();
-
     int GetNumTris() const;
 
     void PlayCreateObject();
@@ -336,6 +311,9 @@ public:
     void SetGrabbed(const bool b);
     bool GetGrabbed() const;
 
+    bool GetDrawBack() const;
+    void SetDrawBack(bool value);
+
     static void SetDrawAssetObjectTeleport(const bool b);
     static bool GetDrawAssetObjectTeleport();   
 
@@ -375,10 +353,6 @@ public:
     static QPointer <AssetImage> internet_connected_img;
     static QPointer <AssetImage> remove_headset_img;
 #endif
-
-public slots:
-
-    void UpdateMedia();
 
 protected:
 
@@ -479,7 +453,6 @@ protected:
     QMatrix4x4 model_matrix_local;
     QMatrix4x4 model_matrix_global;
 
-    bool interpolate;
     float interp_val;
     float interp_time;
     QTime interp_timer;
@@ -514,6 +487,9 @@ protected:
     bool save_to_markup;
 
     bool grabbed;
+    bool draw_back;
+
+    bool interface_object;
 
 private:
 

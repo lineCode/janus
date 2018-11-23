@@ -354,6 +354,9 @@ void RoomPhysics::UpdateToRigidBody(QPointer <Player> player)
 //        motionState->setWorldTransform(btTransform(btBasis, btP));
 //        rb->setLinearVelocity(btVector3(v.x(), v.y(), v.z()));
 //        rb->setMotionState(motionState);
+        if (rb->getMotionState()) {
+            delete rb->getMotionState();
+        }
 
         btDefaultMotionState * motionState = new btDefaultMotionState(btTransform(btBasis, btP));
         rb->setLinearVelocity(btVector3(v.x(), v.y(), v.z()));
@@ -363,6 +366,7 @@ void RoomPhysics::UpdateToRigidBody(QPointer <Player> player)
 
 void RoomPhysics::UpdateFromRigidBody(QPointer <Player> player)
 {
+    //    qDebug() << "RoomPhysics::UpdateFromRigidBody" << this;
     if (!rigidBodies.contains("__player") || rigidBodies["__player"] == NULL) {
         return;
     }

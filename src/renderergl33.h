@@ -36,7 +36,6 @@ public:
     //from renderthread
     void SaveScreenshot();
 
-    void PrintFPS();
     void InitializeGLContext(QOpenGLContext* p_gl_context);    
     void CreateMeshHandle(std::shared_ptr<MeshHandle> * p_handle, VertexAttributeLayout p_layout);
     void DecoupledRender();       

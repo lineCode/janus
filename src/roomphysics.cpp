@@ -366,7 +366,7 @@ void RoomPhysics::UpdateToRigidBody(QPointer <Player> player)
 
 void RoomPhysics::UpdateFromRigidBody(QPointer <Player> player)
 {
-    //    qDebug() << "RoomPhysics::UpdateFromRigidBody" << this;
+//    qDebug() << "RoomPhysics::UpdateFromRigidBody" << this;
     if (!rigidBodies.contains("__player") || rigidBodies["__player"] == NULL) {
         return;
     }

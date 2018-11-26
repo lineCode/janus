@@ -29,5 +29,8 @@ moc_*.h
 dist/
 janusvr
 .qmake.stash
+<<<<<<< HEAD
 resources/cef/mac/Debug/*
 resources/cef/mac/Release/*
+=======
+>>>>>>> origin/master

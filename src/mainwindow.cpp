@@ -1101,7 +1101,6 @@ void MainWindow::Closed()
 
 void MainWindow::SetupWidgets()
 {
-
 #ifdef __APPLE__
     const unsigned int btn_size = 32;
 #elif !defined(__ANDROID__)
@@ -1342,7 +1341,7 @@ void MainWindow::SetupMenuWidgets()
     connect(settingsAct, &QAction::triggered, this, &MainWindow::ActionSettings);
 
     virtualMenuAct = new QAction(tr("Virtual Menu"), this);
-    virtualMenuAct->setShortcut(QKeySequence(Qt::Key_Tab));
+//    virtualMenuAct->setShortcut(QKeySequence(Qt::Key_Tab)); //62.0 - enabling this causes TAB not to work in edit mode
     virtualMenuAct->setStatusTip(tr("Show/hide virtual menu"));
     connect(virtualMenuAct, &QAction::triggered, this, &MainWindow::ActionVirtualMenu);
 

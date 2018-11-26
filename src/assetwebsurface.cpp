@@ -207,7 +207,7 @@ void AssetWebSurface::mouseMoveEvent(QMouseEvent * e, const int cursor_index)
 
     cursor_pos = e->pos();
 
-    if (webview) {
+    if (webview) {        
         QMouseEvent e2(QEvent::MouseMove, e->pos(), e->button(), e->buttons(), e->modifiers());
         webview->mouseMoveEvent(&e2); //TODO/BUG: uncommenting this causes render loop to stall when clicking UI URL bar thing
         hit_test_result[cursor_index] = webview->getHitTestContent(e->pos());

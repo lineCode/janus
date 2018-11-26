@@ -68,12 +68,18 @@ android {
         ndk {
             abiFilters "armeabi", "armeabi-v7a", "x86"
         }
+<<<<<<< HEAD
         versionCode 49
         versionName "60.00"
+=======
+        versionCode 50
+        versionName "61.00"
+>>>>>>> origin/master
     }
 
-    /*
+
     //Used to sign Gear/Go build
+    /*
     signingConfigs {
         release {
             keyAlias keystoreProperties['keyAlias']

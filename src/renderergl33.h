@@ -40,6 +40,9 @@ public:
     void CreateMeshHandle(std::shared_ptr<MeshHandle> * p_handle, VertexAttributeLayout p_layout);
     void DecoupledRender();       
 
+public slots:
+     void PrintFPS();
+
 private:
 
     //renderthread
